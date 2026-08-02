@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # I run both platforms on purpose. Nine files here come in _windows.go and
+  # _other.go pairs (QueryDosDevice, junctions, process kill, the ShellExecute
+  # workaround), and a Linux-only run never compiles the Windows half at all.
+  # The Linux job earns its place the other way round: it fails the moment
+  # platform-specific code leaks out of those files.
+  #
+  # Every step below is a task from the Taskfile, so `task ci` on my machine and
+  # this workflow cannot drift apart.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: task build
+      - run: task build-linux
+      - run: task vet
+
+      # No DayZ Tools, no work drive, no Mikero. I wrote the suite to run without
+      # any of them, and anything that needs a real toolchain sits behind the
+      # integration build tag, which does not run here.
+      - run: task test
+
+  lint:
+    name: format and tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: task lint

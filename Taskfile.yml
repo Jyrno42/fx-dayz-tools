@@ -1,0 +1,104 @@
+# Development tasks for the tool itself.
+#
+# Not to be confused with the Taskfile `dayzmod init` generates for a mod repo:
+# that one is a menu over the built binary, this one builds and checks the Go.
+#
+#   task            list everything
+#   task ci         run what CI runs, before I push
+version: "3"
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  build:
+    desc: compile everything for this platform
+    cmds:
+      - go build ./...
+
+  build-linux:
+    desc: cross-compile, which proves the portable majority does not need Windows
+    cmds:
+      # Nine of my files come in _windows.go/_other.go pairs, and this fails the
+      # moment platform-specific code leaks out of one of them.
+      - GOOS=linux go build ./...
+
+  install:
+    desc: install dayzmod into GOBIN so my mod repos pick up local changes
+    cmds:
+      - go install ./cmd/dayzmod
+
+  test:
+    desc: run the unit suite (no DayZ tools, work drive or Mikero needed)
+    cmds:
+      - go test ./...
+
+  test-v:
+    desc: run the unit suite with per-test output
+    cmds:
+      - go test -v ./...
+
+  race:
+    desc: run the suite under the race detector
+    cmds:
+      - go test -race ./...
+
+  cover:
+    desc: run the suite and open the coverage report
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out
+
+  vet:
+    desc: run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: format the tree in place
+    cmds:
+      - gofmt -w .
+
+  tidy:
+    desc: bring go.mod and go.sum back in line with the imports
+    cmds:
+      - go mod tidy
+
+  lint:
+    desc: vet, plus the formatting and tidiness checks CI enforces
+    cmds:
+      - go vet ./...
+      # gofmt -l prints the offenders and then exits 0 quite happily, so I turn a
+      # non-empty list into an actual failure.
+      - |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "These files need gofmt (run 'task fmt'):"
+          echo "$unformatted"
+          exit 1
+        fi
+      # -diff shows what tidying would change and exits non-zero without touching
+      # anything, so this still works as a check when I have uncommitted work.
+      - |
+        if ! go mod tidy -diff; then
+          echo "go.mod/go.sum are not tidy. Run 'task tidy'."
+          exit 1
+        fi
+
+  ci:
+    desc: everything CI runs, so a red build is not the first I hear of it
+    cmds:
+      # The workflow calls these same tasks one at a time, so there is one
+      # definition of what green means instead of two that drift apart.
+      - task: build
+      - task: build-linux
+      - task: vet
+      - task: lint
+      - task: test
+
+  clean:
+    desc: remove build and coverage artifacts
+    cmds:
+      - go clean -cache -testcache
+      - rm -f coverage.out

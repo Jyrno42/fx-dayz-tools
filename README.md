@@ -1,5 +1,7 @@
 # fx-dayz-tools
 
+[![CI](https://github.com/Jyrno42/fx-dayz-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/Jyrno42/fx-dayz-tools/actions/workflows/ci.yml)
+
 My modding discord: https://discord.gg/e88GPU4hHP
 Buy me a coffee: https://ko-fi.com/jyrno42
 
@@ -108,8 +110,16 @@ GOOS=linux go build ./...   # everything except the Windows syscall layer is por
 ```
 
 Only `internal/paths`, `internal/proc` and `internal/machine/discover_*` are
-Windows-specific. The rest builds and tests anywhere, so CI would not need a DayZ
+Windows-specific. The rest builds and tests anywhere, so CI does not need a DayZ
 install.
+
+`task ci` runs the lot before I push: build, cross-build, vet, the formatting and
+tidiness checks, and the suite. The GitHub workflow calls those same tasks instead
+of repeating the commands, so whatever passes on my machine is what passes in CI.
+
+It runs on both Ubuntu and Windows deliberately. Nine files come in `_windows.go`
+and `_other.go` pairs, and a Linux-only run would never compile the Windows half
+at all.
 
 ## Licence
 
