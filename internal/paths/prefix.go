@@ -15,6 +15,46 @@ func ToWindows(p string) string { return strings.ReplaceAll(p, "/", `\`) }
 // ToSlash normalises separators to forward slashes.
 func ToSlash(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 
+// WinJoin joins path elements with backslashes.
+//
+// Some of what this tool produces is a Windows path no matter what machine
+// builds it: the `!Workshop\@Mod` the DayZ client is handed, the -M= folder
+// pboProject receives. filepath.Join would render those with forward slashes on
+// a Linux host, which is wrong output rather than a different-but-equal path.
+func WinJoin(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.Trim(ToWindows(p), `\`); p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, `\`)
+}
+
+// WinBase returns the last element of a backslash-separated path, and WinDir
+// everything before it. Both mirror filepath.Base/Dir but always read `\` as the
+// separator, so they behave the same on any host.
+func WinBase(p string) string {
+	p = strings.TrimRight(ToWindows(p), `\`)
+	if i := strings.LastIndex(p, `\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+// WinDir returns p without its last element, keeping any drive letter.
+func WinDir(p string) string {
+	p = strings.TrimRight(ToWindows(p), `\`)
+	i := strings.LastIndex(p, `\`)
+	if i < 0 {
+		return p
+	}
+	if dir := p[:i]; dir != "" {
+		return dir
+	}
+	return `\`
+}
+
 // SplitDrive splits "P:\projects\x" into "P:" and `projects\x`. The remainder
 // has no leading or trailing separator. If p has no drive letter, drive is "".
 func SplitDrive(p string) (drive, rest string) {

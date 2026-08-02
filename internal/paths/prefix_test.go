@@ -244,3 +244,49 @@ func TestVisible(t *testing.T) {
 		t.Error("a malformed drive letter is not visible")
 	}
 }
+
+// WinJoin, WinBase and WinDir exist because some of what this tool produces is a
+// Windows path whatever machine builds it -- the client's `!Workshop\@Mod`, the
+// -M= folder handed to pboProject. filepath would render those with forward
+// slashes on a Linux host, which is wrong output rather than an equivalent path.
+// So these must not vary by GOOS, and that is what the test is really pinning.
+func TestWinJoin(t *testing.T) {
+	cases := []struct {
+		parts []string
+		want  string
+	}{
+		{[]string{"!Workshop", "@CF"}, `!Workshop\@CF`},
+		{[]string{"!Workshop", "@Extra Workshop Mod"}, `!Workshop\@Extra Workshop Mod`},
+		// Forward slashes in, backslashes out.
+		{[]string{"P:/_tmp", "@mod"}, `P:\_tmp\@mod`},
+		// Empty and separator-only elements collapse rather than doubling up.
+		{[]string{"a", "", "b"}, `a\b`},
+		{[]string{`a\`, `\b`}, `a\b`},
+		{nil, ""},
+	}
+	for _, tc := range cases {
+		if got := WinJoin(tc.parts...); got != tc.want {
+			t.Errorf("WinJoin(%q) = %q, want %q", tc.parts, got, tc.want)
+		}
+	}
+}
+
+func TestWinBaseAndWinDir(t *testing.T) {
+	cases := []struct{ in, base, dir string }{
+		{`P:\_tmp\mod-release\@mod\Addons`, "Addons", `P:\_tmp\mod-release\@mod`},
+		// A trailing separator must not turn the base into an empty string, which
+		// is how the -M= folder would silently lose its last element.
+		{`P:\_tmp\@mod\Addons\`, "Addons", `P:\_tmp\@mod`},
+		{"P:/_tmp/@mod/Addons", "Addons", `P:\_tmp\@mod`},
+		{"Addons", "Addons", "Addons"},
+		{"", "", ""},
+	}
+	for _, tc := range cases {
+		if got := WinBase(tc.in); got != tc.base {
+			t.Errorf("WinBase(%q) = %q, want %q", tc.in, got, tc.base)
+		}
+		if got := WinDir(tc.in); got != tc.dir {
+			t.Errorf("WinDir(%q) = %q, want %q", tc.in, got, tc.dir)
+		}
+	}
+}

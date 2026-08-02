@@ -3,6 +3,7 @@ package scaffold
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -28,8 +29,21 @@ func TestAddonName(t *testing.T) {
 	}
 }
 
+// skipWithoutWindowsPaths guards the tests that hand Derive a drive-lettered
+// path. Derive calls filepath.Abs, which on a POSIX host reads `E:\projects\x`
+// as a relative name and prepends the working directory, so the assertions
+// below describe nothing real there. What they cover is not Windows-specific;
+// the notation is.
+func skipWithoutWindowsPaths(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-lettered paths are only absolute on Windows")
+	}
+}
+
 // A repo inside the work drive mirrors its position and needs no junction.
 func TestDerivePDriveNative(t *testing.T) {
+	skipWithoutWindowsPaths(t)
 	backing := `C:\Users\me\Documents\DayZ Projects`
 	dir := filepath.Join(backing, "projects", "fx-thing")
 
@@ -53,6 +67,7 @@ func TestDerivePDriveNative(t *testing.T) {
 
 // A repo outside the work drive gets a junction declaration.
 func TestDeriveNeedsJunction(t *testing.T) {
+	skipWithoutWindowsPaths(t)
 	backing := `C:\Users\me\Documents\DayZ Projects`
 
 	s, err := Derive(Spec{Dir: `E:\projects\example-server-mod`}, "P:", backing)
@@ -88,6 +103,7 @@ func TestDeriveRespectsExplicitValues(t *testing.T) {
 // The generated manifest has to actually be valid, or init hands you a repo
 // whose very first command fails.
 func TestGeneratedManifestIsValid(t *testing.T) {
+	skipWithoutWindowsPaths(t)
 	for _, serverOnly := range []bool{false, true} {
 		name := "normal"
 		if serverOnly {

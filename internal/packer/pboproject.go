@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Jyrno42/fx-dayz-tools/internal/paths"
 	"github.com/Jyrno42/fx-dayz-tools/internal/proc"
 )
 
@@ -77,8 +78,10 @@ func (p *PboProject) Caps() Caps {
 // inside. The pipeline hands every packer an Addons directory, so step up one
 // level.
 func modDir(outDir string) string {
-	if strings.EqualFold(filepath.Base(outDir), "Addons") {
-		return filepath.Dir(outDir)
+	// Windows-aware rather than filepath.*: outDir is a P: path being handed to
+	// pboProject, so it stays backslash-separated on any host.
+	if strings.EqualFold(paths.WinBase(outDir), "Addons") {
+		return paths.WinDir(outDir)
 	}
 	return outDir
 }

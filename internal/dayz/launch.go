@@ -3,10 +3,10 @@ package dayz
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/modcfg"
+	"github.com/Jyrno42/fx-dayz-tools/internal/paths"
 )
 
 // ModList resolves a launch mod list into the two forms DayZ needs.
@@ -100,7 +100,9 @@ func ResolveMods(cfg *modcfg.Config, channel string, preset string) (ModList, er
 func modNames(m modcfg.ModRef) (server, client string, err error) {
 	switch m.Source {
 	case modcfg.SourceWorkshop:
-		return m.Name, filepath.Join("!Workshop", m.Name), nil
+		// Backslash always: this string goes to the DayZ client, so its shape
+		// must not depend on what machine produced it.
+		return m.Name, paths.WinJoin("!Workshop", m.Name), nil
 	case modcfg.SourceSelf:
 		return m.Name, m.Name, nil
 	case modcfg.SourcePath:

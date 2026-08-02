@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/hashing"
@@ -22,8 +23,17 @@ func (silent) Command(proc.Cmd)      {}
 
 // testRepo builds a minimal repo whose addon source really exists, so that the
 // pipeline's own filesystem checks pass.
+//
+// This one is Windows-only, and not because the code under test is. The pipeline
+// resolves an addon's source through repo.pdrive_path, which validation requires
+// to carry a drive letter and which then has to exist on disk. On a POSIX host
+// those cannot be the same directory, so there is no fixture to build. The logic
+// being tested is platform-independent; the fixture is not.
 func testRepo(t *testing.T) (*modcfg.Config, *machine.Config) {
 	t.Helper()
+	if runtime.GOOS != "windows" {
+		t.Skip("needs a path that both carries a drive letter and exists on disk")
+	}
 	root := t.TempDir()
 
 	src := filepath.Join(root, "mod", "TestAddon")

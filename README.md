@@ -113,6 +113,11 @@ Only `internal/paths`, `internal/proc` and `internal/machine/discover_*` are
 Windows-specific. The rest builds and tests anywhere, so CI does not need a DayZ
 install.
 
+A handful of tests do skip on Linux, and the skip message says why each one does.
+They are the ones needing a path that carries a drive letter *and* exists on
+disk, which a POSIX host cannot give them. Nothing about the code under test is
+Windows-only; the fixture is.
+
 `task ci` runs the lot before I push: build, cross-build, vet, the formatting and
 tidiness checks, and the suite. The GitHub workflow calls those same tasks instead
 of repeating the commands, so whatever passes on my machine is what passes in CI.
