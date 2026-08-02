@@ -1,0 +1,62 @@
+# A PUBLIC mod with a plain signed release.
+# No Mikero and no obfuscation. AddonBuilder packs straight into the release
+# folder, DSSignFile signs, and the .bikey ships so server admins can whitelist.
+version: 1
+requires_tool: ">= 0.1.0"
+
+mod:
+  id: project-with-public-release
+  name: "@project-with-public-release"
+  visibility: public
+
+repo:
+  pdrive_path: 'P:\projects\project-with-public-release'
+
+addon_sets:
+  main:
+    source: mod
+    addons:
+      PPR_Main:
+        policy: { side: both }
+      PPR_Models:
+        policy: { side: both }
+
+channels:
+  dev:
+    packer: addonbuilder
+    deploy: [client, server]
+    sign: false
+
+  release:
+    packer: addonbuilder
+    change_detection: none
+    sign:
+      key: signing-key
+      distribute_bikey: true
+    payloads:
+      all: { sides: [both, client, server] }
+    extra_files:
+      - { from: tools/mod.cpp, to: mod.cpp }
+    zip:
+      enabled: true
+      out: "project-with-public-release.zip"
+      payloads: [all]
+
+# Seeds the dev server profile so the mod's JSON loader has something to read.
+fixtures:
+  dev_data:
+    - { from: tools/dev-profile/settings.json, to: "settings.json" }
+    - { from: tools/dev-profile/entries/*, to: "entries/" }
+
+launch:
+  port: 2302
+  server_config: tools/serverdz_local.cfg
+  battleye: true
+  mods:
+    - { name: "@CF", source: workshop }
+    - { name: "@VPPAdminTools", source: workshop }
+    - { name: "@project-with-public-release", source: self }
+  presets:
+    # Verifies the mod still runs with the admin tools as a soft dependency.
+    no_vpp:
+      drop_mods: ["@CF", "@VPPAdminTools"]

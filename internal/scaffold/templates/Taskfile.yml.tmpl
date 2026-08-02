@@ -1,0 +1,76 @@
+# go-task menu over `dayzmod`. All the build, run and check logic lives in the
+# tool. This file is just a discoverable alias table.
+#
+#   Install/update:  go install github.com/Jyrno42/fx-dayz-tools/cmd/dayzmod@latest
+#   Project config:  dayz.yml
+#   Machine paths:   %AppData%\dayzmod\config.yml  (`dayzmod config init`)
+version: "3"
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  doctor:
+    desc: verify the work drive, the DayZ tools, the keys and this repo's setup
+    cmds:
+      - dayzmod doctor
+
+  build:
+    desc: pack changed addons and deploy them
+    cmds:
+      - dayzmod build
+
+  build-force:
+    desc: rebuild every addon regardless of its content hash
+    cmds:
+      - dayzmod build --force
+
+  hash:
+    desc: show each addon's content hash and whether it needs rebuilding
+    cmds:
+      - dayzmod hash
+
+  dev:
+    desc: "kill -> build -> server -> wait for the port{{if not .ServerOnly}} -> connect{{end}}"
+    cmds:
+{{- if .ServerOnly}}
+      # Server-only mod, so there is nothing to load on the client and this
+      # stops at a running server. Connect with your client as you normally do.
+      - dayzmod kill
+      - dayzmod build
+      - dayzmod server
+      - dayzmod wait
+{{- else}}
+      - dayzmod dev
+{{- end}}
+
+  server:
+    desc: start the local dedicated server
+    cmds:
+      - dayzmod server
+{{if not .ServerOnly}}
+  join:
+    desc: connect the client to the local server (via DayZ_BE.exe)
+    cmds:
+      - dayzmod client --join
+
+  client:
+    desc: start the client offline with the mod loaded
+    cmds:
+      - dayzmod client
+{{end}}
+  kill:
+    desc: stop the client and the server
+    cmds:
+      - dayzmod kill
+
+  scriptcheck:
+    desc: "boot the server headless and fail on Enforce compile errors (exit 4)"
+    cmds:
+      - dayzmod scriptcheck
+
+  lint:
+    desc: validate dayz.yml; needs no DayZ tools, so it is safe in CI
+    cmds:
+      - dayzmod lint

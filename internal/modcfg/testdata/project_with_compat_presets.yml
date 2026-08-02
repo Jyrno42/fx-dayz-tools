@@ -1,0 +1,50 @@
+# A compatibility mod, and where the scriptcheck gate came from.
+# The default mod set is this mod alone, which is enough to compile-check
+# everything behind the dependency's feature ifdefs. The `full` preset adds the
+# real load order for behaviour testing, i.e. the dependency's core before its
+# feature module, the map before both, and this mod last so it wraps their
+# overrides.
+version: 1
+requires_tool: ">= 0.1.0"
+
+mod:
+  id: project-with-compat-presets
+  name: "@ProjectWithCompatPresets"
+  visibility: private
+
+repo:
+  pdrive_path: 'P:\projects\project-with-compat-presets'
+  pdrive_link_from: 'E:\projects\project-with-compat-presets'
+
+addon_sets:
+  main:
+    source: mod
+    addons:
+      ProjectWithCompatPresets:
+        policy: { side: both }
+
+# This repo packs only scripts and configs.
+include_extensions: ["*.c", "*.cpp", "*.xml", "*.json", "*.txt", "*.csv"]
+
+channels:
+  dev:
+    packer: addonbuilder
+    deploy: [client, server]
+    sign: false
+
+launch:
+  port: 2302
+  server_config: tools/serverdz_local.cfg
+  battleye: true
+  mods:
+    - { name: "@ProjectWithCompatPresets", source: self }
+  presets:
+    full:
+      add_mods:
+        - { name: "@Big Map (Experimental - Dev Build)", source: workshop }
+        - { name: "@DependencyCore", source: workshop }
+        - { name: "@DependencySkills", source: workshop }
+
+scriptcheck:
+  settle: 40s
+  max_hits_shown: 40

@@ -1,0 +1,42 @@
+class CfgPatches
+{
+    class {{.Addon}}
+    {
+        units[] = {};
+        weapons[] = {};
+        requiredVersion = 0.1;
+        requiredAddons[] = {"DZ_Data"};
+    };
+};
+
+class CfgMods
+{
+    class {{.Addon}}
+    {
+        dir = "{{.ID}}";
+        name = "{{.Name}}";
+        credits = "";
+        author = "";
+        type = "mod";
+        dependencies[] = {"Game", "World", "Mission"};
+
+        class defs
+        {
+            class gameScriptModule
+            {
+                value = "";
+                files[] = {"{{.PrefixSlash}}/Scripts/3_Game"};
+            };
+            class worldScriptModule
+            {
+                value = "";
+                files[] = {"{{.PrefixSlash}}/Scripts/4_World"};
+            };
+            class missionScriptModule
+            {
+                value = "";
+                files[] = {"{{.PrefixSlash}}/Scripts/5_Mission"};
+            };
+        };
+    };
+};

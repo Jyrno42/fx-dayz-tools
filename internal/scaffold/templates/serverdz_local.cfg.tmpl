@@ -1,0 +1,30 @@
+// Local dev server config. `dayzmod server` copies this into the DayZServer
+// directory and applies the BattlEye setting to the copy only. This file never
+// gets modified.
+hostname = "{{.ID}} local dev";
+password = "";
+passwordAdmin = "dev";
+maxPlayers = 4;
+
+// Mandatory. Without a valid 32-bit instanceId the server does a graceful
+// config-validation termination about ten seconds in, BEFORE mission init, and
+// it looks exactly like a mod failing to load. dayzmod refuses to deploy a
+// config without one.
+instanceId = 1;
+
+// The dev channel packs unsigned PBOs, so verification stays off here.
+verifySignatures = 0;
+forceSameBuild = 0;
+BattlEye = 1;
+
+disableVoN = 0;
+timeStampFormat = "Short";
+storageAutoFix = 1;
+
+class Missions
+{
+    class DayZ
+    {
+        template = "dayzOffline.chernarusplus";
+    };
+};

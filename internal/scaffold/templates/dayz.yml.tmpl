@@ -1,0 +1,70 @@
+# dayzmod build manifest.
+#
+# Machine paths (DayZ, DayZ Tools, Mikero, signing keys) are NOT in here. They
+# live in the user config, written by `dayzmod config init` and checked by
+# `dayzmod doctor`. Nothing in this file is specific to one computer.
+version: 1
+requires_tool: ">= 0.1.0"
+
+mod:
+  id: {{.ID}}
+  name: "{{.Name}}"
+  # private means the .bikey never gets distributed. Stated once here so a
+  # release cannot publish it by omission.
+  visibility: private
+
+repo:
+  # Where the DayZ tools need to see this repo. It determines every PBO prefix,
+  # so we state it instead of guessing. A broken junction then fails loudly
+  # rather than packing with a silently wrong prefix.
+  pdrive_path: '{{.PDrivePath}}'
+{{- if .PDriveLinkFrom}}
+  # This repo lives outside the work drive, so it gets junctioned into it.
+  # `dayzmod pdrive ensure` creates and verifies the link.
+  pdrive_link_from: '{{.PDriveLinkFrom}}'
+{{- end}}
+
+addon_sets:
+  main:
+    source: mod
+    addons:
+      {{.Addon}}:
+        # binarize defaults to true. It is AddonBuilder's own default, and
+        # model.cfg only gets applied when binarising.
+        policy: { side: {{if .ServerOnly}}server{{else}}both{{end}} }
+
+channels:
+  dev:
+    packer: addonbuilder
+    deploy: [{{if .ServerOnly}}server{{else}}client, server{{end}}]
+    change_detection: lockfile
+    sign: false
+
+launch:
+  port: 2302
+  profile: ServerProfile
+  server_config: tools/serverdz_local.cfg
+  # Waits for the server to bind its port instead of sleeping a fixed time.
+  boot_timeout: 180s
+  battleye: true
+  # ONE ordered list. The tool emits the bare names the server wants and the
+  # !Workshop-prefixed names the client wants, so nobody has to remember that
+  # asymmetry. Order matters: a dependency loads before the mod that needs it.
+  mods:
+{{- if .ServerOnly}}
+    # side: server puts this in -serverMod= instead of -mod=, so clients
+    # neither list nor download it.
+    #
+    # Dropping the PBO into the server's own Addons folder is NOT an
+    # alternative. The engine adds the package and merges its config, but never
+    # compiles the mod's script modules, so a script mod silently does nothing.
+    - { name: "{{.Name}}", source: self, side: server }
+{{- else}}
+    - { name: "{{.Name}}", source: self }
+{{- end}}
+  server_args: ["-dologs", "-adminlog", "-freezecheck"]
+  client_args: ["-noSplash", "-noPause"]
+
+scriptcheck:
+  # How long to let Enforce finish compiling after the port opens.
+  settle: 40s

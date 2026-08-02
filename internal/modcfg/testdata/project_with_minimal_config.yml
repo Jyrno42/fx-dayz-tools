@@ -1,0 +1,44 @@
+# The minimal variant, where everything that can be defaulted is.
+# One addon, dev channel only, no signing and no release. The repo lives on E:
+# and is junctioned into the P: tree, which pdrive_link_from declares so
+# `dayzmod pdrive ensure` can create and verify it.
+#
+# The on-disk folder name deliberately differs from the mod id. That folder gets
+# baked into the PBO prefix and into every script path inside config.cpp, so it
+# is stated here instead of derived from the id, and renaming it is a breaking
+# change.
+version: 1
+requires_tool: ">= 0.1.0"
+
+mod:
+  id: project-with-minimal-config
+  name: "@project-with-minimal-config"
+  visibility: private
+
+repo:
+  pdrive_path: 'P:\projects\minimal-config-repo'
+  pdrive_link_from: 'E:\projects\minimal-config-repo'
+
+addon_sets:
+  main:
+    source: mod
+    addons:
+      PMC_Main:
+        policy: { side: both }
+
+channels:
+  dev:
+    packer: addonbuilder
+    deploy: [client, server]
+    sign: false
+
+launch:
+  port: 2302
+  server_config: tools/serverdz_local.cfg
+  # Replaces the fixed 25s sleep the old Taskfile used before connecting.
+  boot_timeout: 180s
+  battleye: true
+  mods:
+    - { name: "@CF", source: workshop }
+    - { name: "@VPPAdminTools", source: workshop }
+    - { name: "@project-with-minimal-config", source: self }

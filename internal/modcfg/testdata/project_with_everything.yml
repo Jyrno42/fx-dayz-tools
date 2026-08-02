@@ -1,0 +1,110 @@
+# The full-fat variant, with every feature the schema has in one manifest.
+# Two addon sets with distinct mod folders and prefixes, an AddonBuilder dev loop
+# with a hash lockfile, and a Mikero pboProject release with a per-PBO
+# obfuscation split, signing, payload split and zips.
+version: 1
+requires_tool: ">= 0.1.0"
+
+mod:
+  id: project-with-everything
+  name: "@project-with-everything"
+  visibility: private
+
+repo:
+  pdrive_path: 'P:\projects\project-with-everything'
+  lockfile: .build_lockfile.json
+  buildlog_dir: buildlog
+  lfs_guard: true
+
+addon_sets:
+  main:
+    source: mod
+    mod_name: "@project-with-everything"
+    addons:
+      PWE_Core:
+        # Logic PBO, so it is safe to obfuscate.
+        policy: { obfuscate: true, side: both }
+      PWE_Parts:
+        # Model PBO. binarize stays on (the default) because model.cfg only gets
+        # applied when binarising. Obfuscating models is deliberately off.
+        policy: { obfuscate: false, side: both }
+
+  devspawn:
+    # Test-only content, deliberately outside mod/ so a release cannot pick it up.
+    source: mod-dev
+    mod_name: "@project-with-everything-dev"
+    channels: [dev]
+    addons:
+      PWE_DevSpawn:
+        policy: { side: both }
+
+channels:
+  dev:
+    packer: addonbuilder
+    addon_sets: [main, devspawn]
+    deploy: [client, server]
+    change_detection: lockfile
+    sign: false
+
+  release:
+    packer: pboproject
+    addon_sets: [main]
+    change_detection: none
+    sign:
+      key: release-key
+      distribute_bikey: false
+    pboproject:
+      engine: dayz
+      exclude: ["*.md", "*.tga"]
+      compress: true
+      noisy: true
+      automake_stale: true
+      clean_temp: true
+      encode_prefix: true
+      restore_gui_settings: true
+      prefix_file: always
+    payloads:
+      client: { sides: [both, client] }
+      server: { sides: [both, server] }
+    zip:
+      enabled: true
+      payloads: [client, server]
+    manifest:
+      enabled: true
+      algo: sha256
+      out: RELEASE_MANIFEST.txt
+
+hooks:
+  pre_build:
+    - { name: codegen, run: ["uv", "run", "python", "-m", "codegen", "gen"] }
+  pre_release:
+    - { name: codegen, run: ["uv", "run", "python", "-m", "codegen", "gen"] }
+  check:
+    - { name: ruff-format, run: ["uv", "run", "ruff", "format", "--check", "codegen"] }
+    - { name: ruff-lint, run: ["uv", "run", "ruff", "check", "codegen"] }
+    - { name: gen-check, run: ["uv", "run", "python", "-m", "codegen", "gen", "--check"] }
+    - { name: pytest, run: ["uv", "run", "pytest"] }
+
+launch:
+  port: 2302
+  profile: ServerProfile
+  server_config: tools/serverdz_local.cfg
+  boot_timeout: 180s
+  battleye: true
+  mods:
+    - { name: "@CF", source: workshop }
+    - { name: "@VPPAdminTools", source: workshop }
+    - { name: "@project-with-everything", source: self }
+    - { name: "@project-with-everything-dev", source: self, channels: [dev] }
+    # A workshop name containing spaces, which quoting has to survive.
+    - { name: "@Extra Workshop Mod", source: workshop }
+  server_args: ["-dologs", "-adminlog", "-freezecheck"]
+  client_args: ["-noSplash", "-noPause"]
+  diag:
+    enabled: true
+  presets:
+    no_vpp:
+      drop_mods: ["@CF", "@VPPAdminTools"]
+
+scriptcheck:
+  settle: 40s

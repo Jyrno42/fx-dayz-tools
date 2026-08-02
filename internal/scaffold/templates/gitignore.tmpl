@@ -1,0 +1,12 @@
+# Build outputs and caches
+/buildlog/
+/.build_lockfile.json
+
+# pboProject scratch. The tool writes these into a source tree and removes them
+# again, but a hard kill mid-pack can leave one behind. `dayzmod clean
+# --stray-prefix` finds the orphans.
+$PBOPREFIX$
+noscramble.lst
+
+# Never commit signing keys.
+*.biprivatekey

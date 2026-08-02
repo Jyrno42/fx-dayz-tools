@@ -1,0 +1,14 @@
+# Built binaries
+/dayzmod
+/dayzmod.exe
+/dist/
+
+# Go
+*.test
+*.out
+
+# pboProject scratch that the tool materialises into a source tree and removes
+# again on the way out. Committed here so a hard kill mid-pack cannot leak one
+# into a repo; `dayzmod clean --stray-prefix` finds orphans.
+$PBOPREFIX$
+noscramble.lst
