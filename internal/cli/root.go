@@ -143,9 +143,22 @@ func newRoot(g *global) *cobra.Command {
 	return root
 }
 
-// version reports the module version recorded at install time, so
-// `go install ...@latest` gives you a real version without any ldflags.
+// buildVersion is stamped into release binaries with
+// -X github.com/Jyrno42/fx-dayz-tools/internal/cli.buildVersion=<tag>.
+//
+// It stays empty for an ordinary `go build`, where the module version below is
+// the better answer. It exists because ReadBuildInfo only carries a real version
+// for a module the toolchain downloaded: a binary compiled from a checkout, which
+// is what a release artifact is, reports "(devel)" without this.
+var buildVersion string
+
+// version reports the release tag when there is one, falling back to the module
+// version recorded at install time so `go install ...@latest` still gives a real
+// answer with no ldflags at all.
 func version() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info.Main.Version == "" {
 		return "(devel)"

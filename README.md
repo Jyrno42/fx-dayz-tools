@@ -26,6 +26,16 @@ dayzmod config init     # probe this machine for the toolchain
 dayzmod doctor          # verify it
 ```
 
+No Go toolchain? Grab `dayzmod_windows_amd64.exe` from
+[Releases](https://github.com/Jyrno42/fx-dayz-tools/releases) instead. Windows
+will warn that the publisher is unknown, because I do not sign the binary with an
+Authenticode certificate. Every release ships `SHA256SUMS` and a build provenance
+attestation you can check against:
+
+```
+gh attestation verify dayzmod_windows_amd64.exe -R Jyrno42/fx-dayz-tools
+```
+
 `config init` reads the registry and Steam's library index to locate DayZ, DayZ
 Server, DayZ Tools and Mikero DePboTools. It also detects the work drive and
 registers every signing key in the keys directory. Anything it cannot find gets

@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Lets me rehearse a release without cutting a tag. It builds and attests but
+  # publishes nothing, so a dry run cannot create a half-finished release.
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and upload to it
+  id-token: write # sign the provenance attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Nothing ships without passing its own suite. This runs on Linux, so the
+      # fixtures that need a drive letter skip; CI already ran the full matrix on
+      # the commit this tag points at.
+      - run: task test
+
+      - name: Build
+        run: task dist VERSION=${{ github.ref_name }}
+
+      # Records in a public log that these exact bytes came from this workflow,
+      # at this commit. Verifiable with:
+      #   gh attestation verify dayzmod_windows_amd64.exe -R Jyrno42/fx-dayz-tools
+      #
+      # Worth being clear about what this is not: it proves provenance, not
+      # Windows trust. SmartScreen still warns on an unsigned binary, and only
+      # Authenticode signing changes that.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/dayzmod_windows_amd64.exe
+            dist/dayzmod_linux_amd64
+
+      # --notes is prepended to the generated changelog; --notes-file is not
+      # documented to combine with --generate-notes, so the text goes through a
+      # file and then through --notes.
+      - name: Write the install section
+        run: |
+          cat > notes.md <<NOTES
+          ## Install
+
+          \`go install github.com/Jyrno42/fx-dayz-tools/cmd/dayzmod@${{ github.ref_name }}\`
+
+          Or download \`dayzmod_windows_amd64.exe\` below and put it on your PATH.
+
+          Windows will warn that the publisher is unknown, because the binary is not
+          signed with an Authenticode certificate. \`SHA256SUMS\` is there to check the
+          download against, and every binary carries a build provenance attestation:
+
+          \`\`\`
+          gh attestation verify dayzmod_windows_amd64.exe -R ${{ github.repository }}
+          \`\`\`
+
+          Then run \`dayzmod config init\` followed by \`dayzmod doctor\`.
+          NOTES
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --notes "$(cat notes.md)" \
+            dist/dayzmod_windows_amd64.exe \
+            dist/dayzmod_linux_amd64 \
+            dist/SHA256SUMS

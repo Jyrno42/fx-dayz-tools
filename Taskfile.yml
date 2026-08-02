@@ -97,8 +97,29 @@ tasks:
       - task: lint
       - task: test
 
+  dist:
+    desc: cross-compile the release binaries into dist/ (task dist VERSION=v0.1.0)
+    vars:
+      # Defaults to a placeholder so a local `task dist` works; the release
+      # workflow passes the tag.
+      VERSION: '{{.VERSION | default "dev"}}'
+      LDFLAGS: -s -w -X github.com/Jyrno42/fx-dayz-tools/internal/cli.buildVersion={{.VERSION | default "dev"}}
+    cmds:
+      - rm -rf dist
+      - mkdir -p dist
+      # Windows is the only platform the tool actually runs on. The Linux binary
+      # is here because it builds and because `lint` and `hash` are useful in a
+      # pipeline, not because you can pack a PBO with it.
+      - GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '{{.LDFLAGS}}' -o dist/dayzmod_windows_amd64.exe ./cmd/dayzmod
+      - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '{{.LDFLAGS}}' -o dist/dayzmod_linux_amd64 ./cmd/dayzmod
+      # Published beside the binaries so a download can be checked without
+      # trusting the transfer.
+      - cd dist && sha256sum dayzmod_* > SHA256SUMS
+      - cat dist/SHA256SUMS
+
   clean:
     desc: remove build and coverage artifacts
     cmds:
       - go clean -cache -testcache
       - rm -f coverage.out
+      - rm -rf dist
