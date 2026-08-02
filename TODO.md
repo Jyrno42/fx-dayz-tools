@@ -10,6 +10,8 @@ the schema has.
 
 ## Next
 
+- [ ] Add tool version checking and use the `requires_tool` field in `dayz.yml`. Currently its just parsed.
+
 - [ ] **Re-test the release packer against `pboProject.4.31.10.04`.**
       Two specific questions: does it still refuse to run under CreateProcess (i.e.
       do I still need `proc.Cmd.ShellExecute`), and does it still fail a pack when
