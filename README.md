@@ -3,6 +3,7 @@
 [![CI](https://github.com/Jyrno42/fx-dayz-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/Jyrno42/fx-dayz-tools/actions/workflows/ci.yml)
 
 My modding discord: https://discord.gg/e88GPU4hHP
+
 Buy me a coffee: https://ko-fi.com/jyrno42
 
 For problems with the tool, please open an issue or join the discord. I do not provide support for DayZ itself, or for general modding questions. Those belong in one of the many modding discords, or on the Bohemia forums.
