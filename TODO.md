@@ -12,23 +12,16 @@ the schema has.
 
 - [ ] Add tool version checking and use the `requires_tool` field in `dayz.yml`. Currently its just parsed.
 
-- [ ] **Re-test the release packer against `pboProject.4.31.10.04`.**
-      Two specific questions: does it still refuse to run under CreateProcess (i.e.
-      do I still need `proc.Cmd.ShellExecute`), and does it still fail a pack when
-      binarize emits only warnings? Bump `TestedPboProjectVersion` once verified.
+- [ ] **Widen the pboProject flag vector**, or decide not to. `-R`, `+W`, `-D`, `-G`,
+      `-T` and `-$` are still unemitted and still inherited from the GUI registry.
+      The finding that 3.91 rejected them sits upstream of the 4.01/4.03/4.19 parser
+      fixes, so it may not hold on 4.31. Worth knowing that 4.31 rejects a command
+      line by waiting on a keypress prompt, so a bad guess reads as a hang.
 
-- [ ] **First real pboProject release through the tool.** Everything is verified at
-      the argv level and the logic PBO packs, but I have not produced a complete
-      release this way. Check the two newly-explicit flag groups against a
-      `task release` build: `-D -G -T +W` (previously inherited from the GUI
-      registry) and `+$` (documented as default-on). Round-trip both PBOs with
-      `ExtractPbo` and confirm the model PBO is plain and the logic PBO is not.
-
-      Currently blocked on the model PBO. Binarize emits `Terrain grid 12.5/0.5
-      will be too slow` warnings that originate in vanilla configs rather than my
-      mod, and pboProject treats them as fatal. Neither `-N` nor `m_warnings=0`
-      changed anything; the Setup dialog's "Warnings Errors…" button is the untried
-      candidate.
+- [ ] **Check whether 4.31 writes `mod.cpp`.** 4.22 adds appID to it, 4.21 checks it
+      for empty paa names, 4.09 and 4.10 changed and removed its checks. The
+      Publisher owns that file, so a pboProject that writes one into the `-M=` folder
+      changes what `release` has to clean up.
 
 - [ ] **Land the server-only PBO** in my flagship mod. It is already stubbed in the
       manifest, and it is the only measure that prevents rather than delays.
@@ -53,7 +46,8 @@ the schema has.
 - [ ] **`doctor` should dump the pboProject registry state**, so option drift is
       visible. Less urgent now that every output-affecting option is stated
       explicitly, but the registry is still what an unstated option would fall back
-      to.
+      to. Note 4.31 moved it to `HKCU\Software\Mikero\pboProject\Settings`; the
+      `version` value the tool already reads stays on the parent key.
 
 - [ ] **Workshop publishing stays manual**, and probably should for a while.
       `Publisher.exe` is GUI-only (WPF plus SteamLayerWrap, with no CLI surface in
@@ -87,14 +81,23 @@ the schema has.
       files in an existing one
 - [x] `release`: pre-release hooks, clean pack, signing, payload split by side,
       extra files, zips and a SHA-256 manifest
-- [x] pboProject packer. Per-addon invocation with a fully polarised flag vector,
-      `-R` on every run, `$PBOPREFIX$` and `noscramble.lst` materialised and removed
-      again, and `allow_obfuscation: false` on a set as a hard refusal rather than a
-      default
+- [x] pboProject packer. Per-addon invocation with a polarised flag vector,
+      `$PBOPREFIX$.txt` and `noscramble.lst` materialised and removed again, and
+      `allow_obfuscation: false` on a set as a hard refusal rather than a default.
+      (`-R` is *not* emitted; 3.91 rejects the command line when it is present.)
 - [x] Packs, meaning one mod folder holding many PBOs. `include:` copies in prebuilt
       third-party PBOs (keeping their own signatures), an addon set can point at
       vendored source, `addon.prefix` states an exact upstream prefix, and
       `ship_keys` governs the `keys/` folder as a whole.
+- [x] pboProject 4.31. The upgrade moved `+$` to mean the opposite of what 3.91's
+      documentation said, deprecated the extensionless `$PBOPREFIX$`, and made a
+      `source\` subfolder a hard stop. `doctor` now reports the DePbo dll version
+      separately, since that is where obfuscation actually runs.
+- [x] One @mod folder per addon set in `release`. An addon set with its own
+      `mod_name` used to pack into the first set's folder, so a server-only PBO
+      landed inside the client mod and the server payload came out under the wrong
+      folder name. Signing, key distribution and the no-`.bikey` assertion ran
+      against the first folder only.
 
 **Verified against real repos**, not just unit tests:
 
@@ -109,9 +112,10 @@ the schema has.
 - **A server-only mod**, released and signed end to end through AddonBuilder +
   DSSignFile.
 - **A pack repo**, scaffolded with `init` and then reshaped by hand into a pack.
-
-## Open question
-
-**Where my flagship mod's release output actually lands.** Its release mod folder is
-not at the `-M=` path in the old Taskfile, and the registry's `fs_target_mod` still
-points at an unrelated mod. This only affects the release parity step.
+- **A full pboProject release**, three PBOs across two mod folders, signed and
+  obfuscated, then booted. `ExtractPbo` refuses the two obfuscated PBOs and extracts
+  the plain one, so the per-addon `+O`/`-O` polarity is right. The server compiled
+  all 5 modules with no Enforce errors, which is the real test: the client PBO
+  resolves a class out of the separately obfuscated server PBO, and each one is
+  scrambled with its own cipher. A failure there would have looked exactly like a
+  missing addon. The binarise-warnings blocker on the model PBO is gone in 4.31.

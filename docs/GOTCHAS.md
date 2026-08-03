@@ -85,24 +85,54 @@ from the temp directory alone, and surfaced in game as `Undefined function`.
 *Guarded.* `addonbuilder.Preflight` wipes the cache, the staged PBO and the output
 PBO before every run.
 
-### pboProject will not run under CreateProcess
+### pboProject needs a console, because signing shells out
 
-Go's `os/exec` uses CreateProcess, and pboProject then exits 1 immediately having
-done nothing: no PBO, no packing log, no message, and its GUI left open with blank
-fields. Launched the way Explorer would, via PowerShell's `Start-Process` which uses
-ShellExecute, the *identical* command line packs correctly.
+On 3.91 it would not run under CreateProcess at all: it exited 1 immediately having
+done nothing, whatever the arguments, and only ShellExecute worked. 4.31 fixed that.
+Plain CreateProcess packs correctly, in 254ms against 1.26s through ShellExecute.
 
-It is the creation call, not the command line. I ruled the alternatives out by
-testing: the flag vector (both the proven set and an expanded one), `-X` quoted,
-unquoted and omitted, the source as an addon folder and as a parent scan root,
-P:-native and junctioned repos, an 8.3 executable path, and a hand-built raw command
-line via `SysProcAttr.CmdLine`. All of them fail under CreateProcess and all of them
-work under ShellExecute.
+What replaced it is narrower. Signing makes pboProject shell out to copy the
+`.bikey` into the mod folder's `keys\` directory. Run it in a terminal and cmd's own
+`1 File(s) copied` scrolls past. With no console for that child the copy fails,
+`keys\` is left empty, and the run exits 1 *before packing anything* and without a
+packing log to say why. `-K` works everywhere, `+K` only works with a console.
 
-*Guarded.* `proc.Cmd.ShellExecute` exists for this one tool. Nothing else needs it
-and nothing should adopt it without the same evidence. A cleaner refinement would be
-to call `ShellExecuteEx` through `x/sys/windows` instead of shelling out to
-PowerShell.
+Ruled out by testing, all against the same addon: captured pipes, NUL handles,
+inherited handles, `CREATE_NEW_CONSOLE`, `CREATE_NO_WINDOW` and `DETACHED_PROCESS`
+applied to pboProject directly. Every one of them fails. Interposing `cmd.exe` fixes
+it, with or without a window.
+
+*Guarded.* `proc.Cmd.NeedsConsole` runs it as a child of `cmd.exe` with
+`CREATE_NO_WINDOW`, so it gets a real console and no window appears. The command
+line is built by hand via `SysProcAttr.CmdLine` as `cmd /s /c "..."`, because Go's
+argv escaping produces something cmd mis-splits.
+
+The alternative, packing unsigned and signing afterwards with DSSignFile, was
+rejected. Obfuscation deliberately leaves a PBO malformed to third-party readers and
+DSSignFile is one of those, so inline signing keeps an obfuscated release on the
+path known to produce working PBOs.
+
+### `-P` does not suppress the pause on a bad command line
+
+`-P` means "do not pause", and it works for a normal run. It does **not** cover the
+command-line error path: reject an argument and pboProject prints `Command line
+params are probably bad` followed by `press the ANY key`, and waits. It is a
+GUI-subsystem binary, so nothing can ever press one.
+
+The result is an indefinite hang rather than a failure, which is worse than 3.91's
+instant exit 1. It also makes every other mistake here look like a freeze.
+
+*Guarded.* `packer.DefaultPackTimeout` bounds every pack at 30 minutes, and the
+timeout message names this as the likely cause.
+
+### pboProject will not create its own `-M=` folder
+
+It reports `mod folder '...' does not exist`, concludes the command line is bad, and
+then hits the keypress prompt above. So a missing output directory presents as a
+hang, not as an error.
+
+*Guarded.* `Preflight` creates `<mod>\Addons`, which creates the mod folder above
+it.
 
 ### pboProject has no console
 
@@ -120,10 +150,16 @@ They persist in the GUI registry. From its own documentation: *"If you +Obfuscat
 pbo, all subsequent invocations of pboProject will continue to obfuscate until
 turned off."* The registry on this machine holds `m_obfuscate = 1`.
 
-*Guarded.* Every invocation emits a complete, explicitly polarised flag vector
-(`+O` **or** `-O`, never neither) and passes `-R` so the tool never writes its
-options back. Golden tests assert the negative flags rather than merely the absence
-of the positive ones.
+*Guarded.* Every invocation emits an explicitly polarised flag vector (`+O` **or**
+`-O`, never neither) for the options it states. Golden tests assert the negative
+flags rather than merely the absence of the positive ones.
+
+`-R` is **not** among them, despite being the obvious companion to that rule. 3.91
+rejects the whole command line when it is present, and it restores settings *after*
+processing, so it cannot help the case that matters, a failed run blanking the Setup
+dialog. `restore_gui_settings` in `dayz.yml` is therefore intent, not effect. Options
+outside the emitted set still come from the registry; obfuscation is not one of them,
+and that is the polarity that actually matters.
 
 ### `-P` means "do not pause"
 
@@ -136,18 +172,79 @@ It concerns `config.cpp` and `mission.sqm` only. Model binarisation is
 `policy.binarize`, which defaults **on** because `model.cfg` only gets applied when
 binarising.
 
+### "Warnings are errors" is a tri-state dialog, not the `+W` flag
+
+4.05 changed `+W` to mean *ALL* warnings are errors. 4.22 then *"removed the
+universal cripple checkbox"* and 4.23 *"removed last vestiges of warnings are forced
+to errors"*. The flag's help in 4.31 reads: `+W: ALL warnings are also errors. When
+set, disable what you want to ignore`.
+
+The place to ignore one is the Setup dialog's **Warnings & Errors** page, where each
+entry cycles through three states. The dialog says `Click on any checkbox multiple
+times to change from Error to Warning to Disabled`. That page is the lever for
+binarise warnings that originate in vanilla configs rather than in the mod. `-N` and
+`m_warnings` are not, and both are the obvious things to try first.
+
+`warnings` defaults to **false**. It defaulted to true for a while, but the flag was
+never emitted, so the registry's `m_warnings=0` was doing the real work and the
+disagreement went unnoticed.
+
+### The DePbo dll versions separately, and does the actual work
+
+`pboProject.exe` is a front end. Obfuscation, compression and the PBO writing itself
+live in `DePbo64.dll`, which ships on its own cadence. 4.31 asks only for a *minimum*
+("minimum dll is 10.04") rather than pinning one, so the pair can drift far enough
+apart to fail inside the dll while pboProject itself looks current.
+
+*Guarded.* `doctor` reports `HKCU\Software\Mikero\DePbo\version` alongside
+pboProject's own, and warns below the stated minimum.
+
 ### `-X` takes no quotes here
 
 The documentation's "QUOTES ARE MANDATORY" is about *shell* quoting, so that a batch
 file passes the comma-separated list as one token. The tool executes commands
 directly with no shell, so embedded quotes would become part of the exclude pattern.
 
-### `$PBOPREFIX$` is optional
+### `$PBOPREFIX$` is optional, and the extensionless spelling is deprecated
 
 pboProject derives the same prefix AddonBuilder gets from `-prefix=`, so
 AddonBuilder → Mikero is not a prefix break. The tool materialises the file anyway
 (`prefix_file: always`) and removes it afterwards, because relying on derivation is
 exactly the silent-failure class this project exists to eliminate.
+
+Write it as **`$PBOPREFIX$.txt`**. pboProject 4.31 carries the string
+`$PBOPREFIX$ (no ext) deprecated` in every language it ships, and once warnings are
+errors a deprecation notice is a failed pack.
+
+*Guarded.* `Preflight` writes the `.txt` spelling and treats either spelling as
+committed, so a repo carrying the old one does not end up with two prefix files for
+pboProject to choose between.
+
+### `+$` does not mean "encode prefix", it means "no prefix"
+
+4.31's own help: `+/-$ do/don't allow no prefix for pbo` and `+$: enable no prefix
+in pbo`. The 3.91 documentation described the same letter as *"Do/Don't encode prefix
+in pbo, when possible. Default is enabled"*, which is the exact opposite. A config
+written against the old wording, carried forward literally, ships PBOs the engine
+cannot address.
+
+4.31 also refuses two combinations outright, in a GUI nobody is watching:
+`you cannot use no prefix if obfuscating` and `you cannot use no prefix AND a rename`
+(a rename being `+L=`).
+
+*Guarded.* The setting is named `no_prefix` for what it does rather than for the
+flag, the old `encode_prefix` key is rejected with an explanation rather than an
+"unknown field", and both refused combinations error in `Argv` before pboProject
+gets the chance.
+
+### A `source\` subfolder is a hard stop
+
+4.06: *"now stops if a source \ folder is present"*, with 4.25 adding the warning
+that explains it: pboProject will never put its contents in a PBO, so a folder named
+that is assumed to be a mistake rather than content.
+
+*Guarded.* `Preflight` refuses, naming the directory, rather than letting it become
+a failed pack whose only explanation is a line in an unopened log.
 
 ### Obfuscation forces compression, and `init*.*` will not compress
 
@@ -156,6 +253,30 @@ belongs in `policy.noscramble`.
 
 Worth knowing too: the persisted `wildcard_exclude_from_compression` is the **Arma**
 default (`init*.sqf,init*.sqs`) and does not cover DayZ's `init*.c`.
+
+### Obfuscating a model PBO is not automatically fatal
+
+The received wisdom, carried over from another of my mods, is that obfuscation must
+never touch a model PBO. Tested directly on 1.29, packing my flagship mod's models
+plus configs both ways and booting each:
+
+- **Server side, measurably identical.** Same class count, same entities spawned,
+  same warning counts, same mod-side log output. The obfuscated `config.bin` parses
+  and the p3d references resolve.
+- **Client side, renders correctly.** Meshes, textures and geometry all normal.
+
+The dll really does scramble the models. The log lists `obfuscating any paas`,
+`any rvmats`, `any p3ds` and `all p3d contents`. It just does not break them here.
+
+So treat it as per-mod, and test rather than assume in either direction. Two traps
+if you do test:
+
+- **Size tells you nothing.** Mikero's docs say obfuscated PBOs run ~15% larger.
+  That is about text-heavy content. My model PBO came out 0.27% *smaller*, because
+  forced compression roughly cancels the overhead on already-compressed assets. Use
+  `ExtractPbo` refusing the file as the signal instead.
+- **A server boot cannot see it.** A scrambled mesh or material fails at render, not
+  at load, and a headless server never renders. Only a client settles it.
 
 ### Obfuscated output is never reproducible
 
@@ -213,8 +334,47 @@ neither writes nor preserves either file.
 
 - **`-packonly`** is what I use as AddonBuilder's flag for `binarize: false`. Nothing
   sets that today, so it has never actually run.
-- **Everything about pboProject here was established against version 3.91** (registry
-  `version = 391`, DePbo dll 9.46). `pboProject.4.31.10.04` exists and is completely
-  untested. Several notes above may simply not apply to 4.x, most obviously the
-  CreateProcess problem. `dayzmod doctor` reports the installed version and warns
-  when it is not the one the packer was verified against.
+
+### pboProject 4.31
+
+**Installed since 2026-08-03: 4.31.10.04 with DePbo dll 10.22** (registry
+`version = 431`, `DePbo\version = 1022`), replacing 3.91 with dll 9.46. `doctor`
+reports both and warns that the packer is verified against 391.
+
+Established from the 4.31 binary and its change log, without a build:
+
+- The exe is now **x64** (3.91 was x86) and **still GUI subsystem**, so the
+  no-console gotcha above still holds and the packing log is still the only output.
+- Its settings moved to `HKCU\Software\Mikero\pboProject\Settings`. The `version`
+  value the tool reads stays on the parent key.
+- The shipped `.docx` **lags the binary**. It documents `+Stop` (removed in 4.13) and
+  `+/-Q`, neither of which is in the binary's own option table; it gives `+/-$` the
+  3.91 meaning; and it misses `+/-@` entirely. Dump the strings out of the exe rather
+  than trusting the docs.
+
+Settled by a full release of my flagship mod through the tool:
+
+- **CreateProcess works**, and signing needs a console. Both above.
+- **The emitted vector packs**, including the new `+/-H` and `+/-@`.
+- **`-X=` still wants no quotes.**
+- **Obfuscation works, per addon.** `ExtractPbo` refuses the two `obfuscate: true`
+  PBOs with `DePbo:Pbo unknown header type` and extracts the `obfuscate: false` one
+  normally, so the `+O`/`-O` polarity is right addon by addon.
+- **The binarise-warnings blocker is gone.** The model PBO packs. 4.22 removed the
+  "universal cripple checkbox" and 4.23 the "last vestiges of warnings are forced to
+  errors", and with `warnings` defaulting off the vanilla-config terrain-grid
+  warnings no longer fail a pack.
+
+Still untested:
+
+- **Does it reject the wider flag vector** (`-R +W -D -G -T -$`)? That finding is
+  3.91-specific and sits upstream of the 4.01/4.03/4.19 parser fixes. Untested on
+  4.31, and 4.31 rejects a command line by hanging, so widening is an experiment.
+- **Does it now touch `mod.cpp`?** 4.22 adds appID to it, 4.21 checks it for empty
+  paa names, 4.09/4.10 changed and removed its checks. The Publisher owns that file
+  (see above), so a pboProject that writes one into the `-M=` folder changes what
+  `release` has to clean up.
+- **Whether obfuscation survives a cross-PBO symbol reference.** Packing proves
+  nothing here: if a class resolved from another PBO gets scrambled inconsistently
+  between the two, the server fails to compile and it looks exactly like a missing
+  addon. Only booting a server off the release payload settles it.

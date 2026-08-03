@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -132,7 +133,7 @@ func Parse(data []byte) (*Config, error) {
 		if errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("file is empty; run `dayzmod config init`")
 		}
-		return nil, err
+		return nil, explainDecodeError(err)
 	}
 
 	if cfg.Version == 0 {
@@ -143,6 +144,43 @@ func Parse(data []byte) (*Config, error) {
 	}
 	cfg.applyDefaults()
 	return &cfg, nil
+}
+
+// unknownFieldRe matches what yaml.v3 says about a key the schema has no home
+// for: "line 16: field inkscape not found in type machine.Paths".
+var unknownFieldRe = regexp.MustCompile(`^(?:line (\d+): )?field (\S+) not found in type \S+$`)
+
+// explainDecodeError turns a strict-decoding failure into advice.
+//
+// Rejecting unknown fields is what stops a typo leaving a tool quietly
+// undiscovered, but it also means one dead key from an older config stops the
+// whole tool. yaml.v3's own wording names a Go type the reader has never heard
+// of and says nothing about what to do, so say it here instead.
+func explainDecodeError(err error) error {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return err
+	}
+
+	var out []string
+	for _, msg := range te.Errors {
+		m := unknownFieldRe.FindStringSubmatch(msg)
+		if m == nil {
+			out = append(out, msg)
+			continue
+		}
+		where := ""
+		if m[1] != "" {
+			where = " on line " + m[1]
+		}
+		out = append(out, fmt.Sprintf(
+			"unknown key %q%s: dayzmod does not read it. Delete the line, or correct the spelling if it was meant to be one of the keys above it",
+			m[2], where))
+	}
+	if len(out) == 1 {
+		return errors.New(out[0])
+	}
+	return errors.New(strings.Join(out, "\n  "))
 }
 
 func (c *Config) applyDefaults() {

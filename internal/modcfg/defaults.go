@@ -139,15 +139,26 @@ func (p *PboProject) applyDefaults() {
 	setDefault(&p.Noisy, true)              // +N
 	setDefault(&p.AutomakeStale, true)      // +J
 	setDefault(&p.CleanTemp, true)          // +C
-	setDefault(&p.EncodePrefix, true)       // +$
+	setDefault(&p.NoPrefix, false)          // -$, always ship a prefix
 	setDefault(&p.RestoreGUISettings, true) // -R
 	// -B: the proven release command does not binarise cpp/sqm. Separate thing
 	// from model binarisation, which policy.binarize controls.
 	setDefault(&p.BinariseCpp, false)
-	setDefault(&p.Warnings, true)    // +W, matching the persisted GUI state
+	// -W. This defaulted to true while it was never emitted, so the registry's
+	// m_warnings=0 was doing the real work and nobody noticed the disagreement.
+	// Stating it as false is what actually matches how releases have been built,
+	// and pboProject 4.05 made +W mean ALL warnings are errors, which is fatal on
+	// binarise warnings that originate in vanilla configs rather than the mod.
+	// Per-warning severity belongs in the Setup dialog's Warnings & Errors page,
+	// where each entry cycles Error -> Warning -> Disabled.
+	setDefault(&p.Warnings, false)
 	setDefault(&p.DeletePng, false)  // -D, never delete source art
 	setDefault(&p.ConvertOgg, false) // -G
 	setDefault(&p.ShrinkP3D, false)  // -T
+	// -H leaves DayZ png conversion enabled; -@ leaves cfgPatches class names
+	// alone, which is the only safe default for a mod other mods depend on.
+	setDefault(&p.DisablePngConvert, false)
+	setDefault(&p.RenameCfgPatches, false)
 }
 
 func (c *Config) defaultLaunch() {

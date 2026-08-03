@@ -245,7 +245,10 @@ func TestPboProjectDefaultsAreExplicit(t *testing.T) {
 		"noisy":                p.Noisy,
 		"automake_stale":       p.AutomakeStale,
 		"clean_temp":           p.CleanTemp,
-		"encode_prefix":        p.EncodePrefix,
+		"no_prefix":            p.NoPrefix,
+		"warnings":             p.Warnings,
+		"disable_png_convert":  p.DisablePngConvert,
+		"rename_cfgpatches":    p.RenameCfgPatches,
 		"restore_gui_settings": p.RestoreGUISettings,
 	} {
 		if ptr == nil {

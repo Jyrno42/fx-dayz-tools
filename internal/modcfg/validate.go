@@ -217,6 +217,22 @@ func (c *Config) validateChannelPacker(ch *Channel, where string, add addFunc) {
 	if !boolOr(p.RestoreGUISettings, true) {
 		add("%s.pboproject.restore_gui_settings is false: without -R every run rewrites the persisted pboProject options, so a later manual GUI build silently changes behaviour", where)
 	}
+	if p.EncodePrefix != nil {
+		add("%s.pboproject.encode_prefix has been replaced by no_prefix, which states the +/-$ flag the way pboProject 4.31 does: +$ means ship WITHOUT a prefix. The sense is reversed, so encode_prefix: true is no_prefix: false. Delete the old key", where)
+	}
+	if boolOr(p.NoPrefix, false) {
+		// pboProject refuses both of these itself, in a GUI nobody is watching.
+		if p.PrefixFile == PrefixAlways {
+			add("%s.pboproject.no_prefix is true but prefix_file is %q, so the pack would write a $PBOPREFIX$ it was told not to encode", where, PrefixAlways)
+		}
+		for _, set := range c.SetsFor(ch) {
+			for _, aname := range set.AddonNames() {
+				if set.Addons[aname].Policy.ObfuscateOr(false) {
+					add("%s.pboproject.no_prefix is true but addon %s is obfuscated; pboProject refuses to obfuscate a PBO with no prefix", where, aname)
+				}
+			}
+		}
+	}
 	if p.SinglePass {
 		// Single pass cannot honour per-addon policy, so warn when the manifest
 		// declares one that would end up ignored.

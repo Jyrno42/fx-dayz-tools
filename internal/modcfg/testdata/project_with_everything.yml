@@ -60,7 +60,7 @@ channels:
       noisy: true
       automake_stale: true
       clean_temp: true
-      encode_prefix: true
+      no_prefix: false
       restore_gui_settings: true
       prefix_file: always
     payloads:

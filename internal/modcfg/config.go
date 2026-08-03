@@ -241,12 +241,22 @@ type PboProject struct {
 	Noisy         *bool `yaml:"noisy"`          // +N, warnings are errors
 	AutomakeStale *bool `yaml:"automake_stale"` // +J
 	CleanTemp     *bool `yaml:"clean_temp"`     // +C
-	EncodePrefix  *bool `yaml:"encode_prefix"`  // +$
+	// NoPrefix is +/-$, where +$ means ship the PBO WITHOUT a prefix. It replaces
+	// an earlier encode_prefix, which named the same flag with the opposite sense
+	// on the strength of the 3.91 documentation; 4.31's own help says "+$: enable
+	// no prefix in pbo". Setting it true with obfuscation or a label is refused,
+	// because pboProject refuses those combinations itself.
+	NoPrefix *bool `yaml:"no_prefix"`
 	// BinariseCpp controls pboProject's +/-B, which is specifically about
 	// binarising config.cpp and mission.sqm, NOT about binarising models. Models
 	// are governed by policy.binarize. The proven release command passes -B, so
 	// this defaults to false.
 	BinariseCpp *bool `yaml:"binarise_cpp"`
+	// DisablePngConvert is +/-H, DayZ only, where +H disables png conversion.
+	// RenameCfgPatches is +/-@. Both change what the engine sees, so both are
+	// stated on every invocation rather than inherited from the GUI registry.
+	DisablePngConvert *bool `yaml:"disable_png_convert"` // +/-H
+	RenameCfgPatches  *bool `yaml:"rename_cfgpatches"`   // +/-@
 
 	// These rewrite or remove source-derived content, so we state them instead of
 	// inheriting them from the GUI registry. All default off, which matches how
@@ -255,9 +265,13 @@ type PboProject struct {
 	DeletePng  *bool `yaml:"delete_png"`  // +/-D
 	ConvertOgg *bool `yaml:"convert_ogg"` // +/-G, wav/wss to ogg
 	ShrinkP3D  *bool `yaml:"shrink_p3d"`  // +/-T, DayZ only
-	// RestoreGUISettings adds -R so the tool never writes its options back to the
-	// registry. Without it, a -O run would leave the GUI set to "don't obfuscate"
-	// and change what a later manual build produces.
+	// RestoreGUISettings asks for -R, so the tool never writes its options back to
+	// the registry. Without it, a -O run leaves the GUI set to "don't obfuscate"
+	// and changes what a later manual build produces.
+	//
+	// It is intent rather than effect today: the packer does not emit -R, because
+	// 3.91 rejects the command line when it is present. Whether 4.31 accepts it is
+	// one of the open questions in TODO.md.
 	RestoreGUISettings *bool `yaml:"restore_gui_settings"`
 
 	PrefixFile PrefixFilePolicy `yaml:"prefix_file"`
@@ -266,6 +280,12 @@ type PboProject struct {
 	// original Taskfile did, instead of once per addon. It stays around as the
 	// parity baseline and as a one-flag revert.
 	SinglePass bool `yaml:"single_pass"`
+
+	// EncodePrefix is the old name for the +/-$ flag, kept only so a repo still
+	// carrying it gets an explanation rather than "unknown field". It named the
+	// flag with the opposite sense, so it cannot be migrated by copying the value
+	// across: encode_prefix: true means no_prefix: false. Validation rejects it.
+	EncodePrefix *bool `yaml:"encode_prefix"`
 }
 
 // Payload is one shippable bundle assembled from the packed PBOs.

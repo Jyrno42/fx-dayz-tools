@@ -40,12 +40,70 @@ type ReleaseOptions struct {
 // Payload is one assembled, shippable bundle.
 type Payload struct {
 	Name string
-	// Dir is the staged @mod folder.
+	// Dir is what gets zipped and hashed. It is the @mod folder itself when the
+	// payload holds exactly one, and a directory containing one @mod folder per
+	// addon set when it holds several.
 	Dir string
+	// ModNames are the @mod folders in this payload, in declaration order. More
+	// than one means the addon sets that fed it build into different folders,
+	// which an operator has to keep separate rather than merge.
+	ModNames []string
 	// Zip is the archive, when one was produced.
 	Zip string
 	// Addons are the PBO names it contains.
 	Addons []string
+
+	// zipRoot is the folder name to nest Dir under inside the archive. Empty
+	// when Dir already contains the @mod folders and its entries go in as-is.
+	zipRoot string
+}
+
+// modStage is one @mod folder being built. A release has several whenever its
+// addon sets declare different mod_names, which is how a server-only addon gets
+// its own folder for -serverMod= instead of riding inside the client's.
+type modStage struct {
+	ModName string
+	Dir     string
+}
+
+// releaseStages lists the @mod folders this channel builds, in declared order
+// and deduplicated, since several sets may share one.
+func (b *Builder) releaseStages(ch *modcfg.Channel) []modStage {
+	if ch.Out != "" {
+		// An explicit out path names one folder, so every set lands in it.
+		return []modStage{{ModName: filepath.Base(ch.Out), Dir: ch.Out}}
+	}
+
+	var out []modStage
+	seen := map[string]bool{}
+	for _, set := range b.Mod.SetsFor(ch) {
+		name := set.ModName
+		if name == "" {
+			name = b.Mod.Mod.Name
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, modStage{ModName: name, Dir: filepath.Join(b.releaseDir(ch), name)})
+	}
+	if len(out) == 0 {
+		name := b.Mod.Mod.Name
+		out = append(out, modStage{ModName: name, Dir: filepath.Join(b.releaseDir(ch), name)})
+	}
+	return out
+}
+
+// stageDirFor is where an addon set's PBOs are staged.
+func (b *Builder) stageDirFor(ch *modcfg.Channel, set *modcfg.AddonSet) string {
+	if ch.Out != "" {
+		return ch.Out
+	}
+	name := set.ModName
+	if name == "" {
+		name = b.Mod.Mod.Name
+	}
+	return filepath.Join(b.releaseDir(ch), name)
 }
 
 // ReleaseResult describes what a release produced.
@@ -75,48 +133,60 @@ func (b *Builder) Release(ctx context.Context, opts ReleaseOptions) (*ReleaseRes
 		}
 	}
 
-	modName := b.releaseModName(ch)
-	stage := filepath.Join(b.releaseDir(ch), modName)
-	addonsDir := filepath.Join(stage, "Addons")
+	// One staging folder per @mod folder the channel builds. A set that declares
+	// its own mod_name gets its own, because merging a server-only addon into the
+	// client's folder is precisely what -serverMod= exists to avoid.
+	stages := b.releaseStages(ch)
+	primary := stages[0]
+	addonsDir := filepath.Join(primary.Dir, "Addons")
 
 	// A release never reuses whatever happened to be lying around. A stale PBO
 	// from a previous run is exactly the thing that ships by accident.
 	if !b.Runner.DryRun() {
-		if err := os.RemoveAll(stage); err != nil {
-			return nil, fmt.Errorf("release: clearing %s: %w", stage, err)
-		}
-		if err := os.MkdirAll(addonsDir, 0o755); err != nil {
-			return nil, fmt.Errorf("release: %w", err)
+		for _, st := range stages {
+			if err := os.RemoveAll(st.Dir); err != nil {
+				return nil, fmt.Errorf("release: clearing %s: %w", st.Dir, err)
+			}
+			if err := os.MkdirAll(filepath.Join(st.Dir, "Addons"), 0o755); err != nil {
+				return nil, fmt.Errorf("release: %w", err)
+			}
 		}
 	}
 
-	b.Report.Step("%-28s %s", "staging", stage)
+	for _, st := range stages {
+		b.Report.Step("%-28s %s", "staging", st.Dir)
+	}
 
-	packed, err := b.packRelease(ctx, ch, p, addonsDir, opts)
+	packed, err := b.packRelease(ctx, ch, p, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	res := &ReleaseResult{StageDir: stage}
+	res := &ReleaseResult{StageDir: primary.Dir}
 
 	// Signing runs before the includes get staged, so the signer only ever sees
 	// PBOs this repo packed. A prebuilt PBO keeps whatever signature it came
 	// with.
-	if err := b.signRelease(ctx, ch, stage, addonsDir, opts, res); err != nil {
+	if err := b.signRelease(ctx, ch, stages, opts, res); err != nil {
 		return nil, err
 	}
 
-	included, err := b.stageIncludes(b.Mod.Include, addonsDir, stage, b.Mod.ShipKeysEnabled(ch))
+	// Includes and channel extra files are properties of the mod as a whole, so
+	// they go to the primary folder rather than being duplicated into every one.
+	included, err := b.stageIncludes(b.Mod.Include, addonsDir, primary.Dir, b.Mod.ShipKeysEnabled(ch))
 	if err != nil {
 		return nil, err
 	}
+	for i := range included {
+		included[i].ModName = primary.ModName
+	}
 	packed = append(packed, included...)
 	res.Included = len(included)
-	if err := b.stageExtras(ch.ExtraFiles, stage); err != nil {
+	if err := b.stageExtras(ch.ExtraFiles, primary.Dir); err != nil {
 		return nil, err
 	}
 
-	res.Payloads, err = b.assemblePayloads(ch, stage, modName, packed, opts)
+	res.Payloads, err = b.assemblePayloads(ch, stages, packed, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +205,8 @@ type packedAddon struct {
 	Name string
 	Side modcfg.Side
 	PBO  string
+	// ModName is the @mod folder this addon belongs to, taken from its set.
+	ModName string
 	// Included marks a prebuilt PBO copied in instead of packed here. Those keep
 	// their own signatures and never get re-signed.
 	Included bool
@@ -144,20 +216,21 @@ func (b *Builder) packRelease(
 	ctx context.Context,
 	ch *modcfg.Channel,
 	p packer.Packer,
-	addonsDir string,
 	opts ReleaseOptions,
 ) ([]packedAddon, error) {
 	var packed []packedAddon
 
 	for _, set := range b.Mod.SetsFor(ch) {
+		stageDir := b.stageDirFor(ch, set)
 		for _, addonName := range set.AddonNames() {
 			job, err := b.job(ch, set, addonName, p.Caps())
 			if err != nil {
 				return nil, err
 			}
-			// Everything lands in one Addons directory. The payload split is what
-			// decides which bundles each PBO reaches.
-			job.OutDir = addonsDir
+			// Each set packs into its own @mod folder. Which bundles a PBO then
+			// reaches is the payload split's job; which FOLDER it lives in is
+			// this one, and the two are not the same question.
+			job.OutDir = filepath.Join(stageDir, "Addons")
 			if opts.SkipObfuscation {
 				job.Obfuscate = false
 			}
@@ -187,9 +260,10 @@ func (b *Builder) packRelease(
 			}
 
 			packed = append(packed, packedAddon{
-				Name: addonName,
-				Side: set.Addons[addonName].Policy.Side,
-				PBO:  p.PboPath(job),
+				Name:    addonName,
+				Side:    set.Addons[addonName].Policy.Side,
+				PBO:     p.PboPath(job),
+				ModName: filepath.Base(stageDir),
 			})
 		}
 	}
@@ -199,7 +273,7 @@ func (b *Builder) packRelease(
 func (b *Builder) signRelease(
 	ctx context.Context,
 	ch *modcfg.Channel,
-	stage, addonsDir string,
+	stages []modStage,
 	opts ReleaseOptions,
 	res *ReleaseResult,
 ) error {
@@ -213,8 +287,10 @@ func (b *Builder) signRelease(
 		// pboProject writes a keys/ folder whenever it signs. Without signing
 		// there should be none, but clear it anyway for a private mod.
 		if !distribute && !b.Runner.DryRun() {
-			if err := sign.RemoveKeysDir(stage); err != nil {
-				return err
+			for _, st := range stages {
+				if err := sign.RemoveKeysDir(st.Dir); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -225,16 +301,19 @@ func (b *Builder) signRelease(
 		return err
 	}
 
-	// pboProject signs during packing. AddonBuilder needs a separate pass.
+	// pboProject signs during packing. AddonBuilder needs a separate pass, once
+	// per staged folder.
 	p, _ := b.packerFor(ch)
 	if !p.Caps().CanSignInline {
 		signer := &sign.Signer{Exe: b.Host.DSSignFile()}
 		b.Report.Step("%-28s signing with %q", "release", ch.Sign.Key)
-		if _, err := signer.SignDir(ctx, b.Runner, addonsDir, sign.Options{
-			PrivateKey: key.Private,
-			V2:         ch.Sign.V2,
-		}); err != nil {
-			return err
+		for _, st := range stages {
+			if _, err := signer.SignDir(ctx, b.Runner, filepath.Join(st.Dir, "Addons"), sign.Options{
+				PrivateKey: key.Private,
+				V2:         ch.Sign.V2,
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	res.Signed = true
@@ -244,22 +323,29 @@ func (b *Builder) signRelease(
 	}
 
 	if distribute {
-		dst, err := sign.DistributeKey(key.Public, stage)
-		if err != nil {
-			return err
+		// Every folder gets the key. A server-only folder loaded through
+		// -serverMod= is a mod in its own right, and an operator pointing -mod=
+		// at it instead needs the signature to verify.
+		for _, st := range stages {
+			dst, err := sign.DistributeKey(key.Public, st.Dir)
+			if err != nil {
+				return err
+			}
+			b.Report.Detail("public key shipped: %s", filepath.Base(dst))
 		}
-		b.Report.Detail("public key shipped: %s", filepath.Base(dst))
 		return nil
 	}
 
 	// No key ships. Remove the folder pboProject may have created, then prove
 	// none survived. Publishing a private mod's .bikey lets anyone whitelist a
 	// repack, and a pack that says it ships no keys had better ship no keys.
-	if err := sign.RemoveKeysDir(stage); err != nil {
-		return err
-	}
-	if err := sign.AssertNoPublicKeys(stage); err != nil {
-		return err
+	for _, st := range stages {
+		if err := sign.RemoveKeysDir(st.Dir); err != nil {
+			return err
+		}
+		if err := sign.AssertNoPublicKeys(st.Dir); err != nil {
+			return err
+		}
 	}
 	if !shipKeys {
 		b.Report.Detail("no keys shipped (ship_keys is off)")
@@ -310,7 +396,7 @@ func (b *Builder) stageExtras(extras []modcfg.FileCopy, stage string) error {
 // is the common case for a mod that ships in one piece.
 func (b *Builder) assemblePayloads(
 	ch *modcfg.Channel,
-	stage, modName string,
+	stages []modStage,
 	packed []packedAddon,
 	opts ReleaseOptions,
 ) ([]Payload, error) {
@@ -318,20 +404,27 @@ func (b *Builder) assemblePayloads(
 	if len(opts.Payloads) > 0 {
 		names = opts.Payloads
 	}
+	primary := stages[0]
+	stageDir := map[string]string{}
+	for _, st := range stages {
+		stageDir[st.ModName] = st.Dir
+	}
 
 	if len(ch.Payloads) == 0 {
-		pl := Payload{Name: "all", Dir: stage}
+		pl := Payload{Name: "all", Dir: primary.Dir, ModNames: []string{primary.ModName}, zipRoot: primary.ModName}
 		for _, a := range packed {
 			pl.Addons = append(pl.Addons, a.Name)
 		}
-		if err := b.zipPayload(ch, &pl, modName, opts); err != nil {
+		if err := b.zipPayload(ch, &pl, opts); err != nil {
 			return nil, err
 		}
 		return []Payload{pl}, nil
 	}
 
-	// One payload that takes everything needs no copy, so use the stage as-is.
-	single := len(names) == 1 && payloadTakesAll(ch.Payloads[names[0]], packed)
+	// One payload that takes everything out of a single staged folder needs no
+	// copy, so use the stage as-is. With several folders in play there is no one
+	// directory that already holds the answer.
+	single := len(stages) == 1 && len(names) == 1 && payloadTakesAll(ch.Payloads[names[0]], packed)
 
 	var out []Payload
 	for _, name := range names {
@@ -340,20 +433,23 @@ func (b *Builder) assemblePayloads(
 			return nil, fmt.Errorf("release: no payload %q in channel %s", name, ch.Name)
 		}
 
-		pl := Payload{Name: name, Dir: stage}
-		if !single {
-			pl.Dir = filepath.Join(b.releaseDir(ch), "payload-"+name, modName)
-		}
+		pl := Payload{Name: name}
+		root := filepath.Join(b.releaseDir(ch), "payload-"+name)
 
+		// Group by @mod folder, so a payload fed by two sets ships two folders
+		// rather than one merged folder an operator cannot take apart.
 		for _, a := range packed {
 			if !sideIn(a.Side, spec.Sides) {
 				continue
 			}
 			pl.Addons = append(pl.Addons, a.Name)
+			if !containsString(pl.ModNames, a.ModName) {
+				pl.ModNames = append(pl.ModNames, a.ModName)
+			}
 			if single || b.Runner.DryRun() {
 				continue
 			}
-			if err := copyAddonInto(a.PBO, filepath.Join(pl.Dir, "Addons")); err != nil {
+			if err := copyAddonInto(a.PBO, filepath.Join(root, a.ModName, "Addons")); err != nil {
 				return nil, fmt.Errorf("release: %w", err)
 			}
 		}
@@ -362,9 +458,24 @@ func (b *Builder) assemblePayloads(
 			return nil, fmt.Errorf("release: payload %q would be empty; no addon has a matching side", name)
 		}
 
+		switch {
+		case single:
+			pl.Dir, pl.zipRoot = primary.Dir, primary.ModName
+		case len(pl.ModNames) == 1:
+			// Exactly one folder, so the payload directory can be that folder and
+			// the archive keeps the shape it has always had.
+			pl.Dir, pl.zipRoot = filepath.Join(root, pl.ModNames[0]), pl.ModNames[0]
+		default:
+			// Several folders: the payload directory holds them side by side and
+			// goes into the archive as-is, so they extract unmerged.
+			pl.Dir, pl.zipRoot = root, ""
+		}
+
 		if !single && !b.Runner.DryRun() {
-			if err := copySiblings(stage, pl.Dir); err != nil {
-				return nil, fmt.Errorf("release: %w", err)
+			for _, mn := range pl.ModNames {
+				if err := copySiblings(stageDir[mn], filepath.Join(root, mn)); err != nil {
+					return nil, fmt.Errorf("release: %w", err)
+				}
 			}
 			for _, e := range spec.ExtraFiles {
 				src := filepath.Join(b.Mod.Root, filepath.FromSlash(e.From))
@@ -374,8 +485,8 @@ func (b *Builder) assemblePayloads(
 			}
 		}
 
-		b.Report.Step("%-28s %d addon(s)", "payload "+name, len(pl.Addons))
-		if err := b.zipPayload(ch, &pl, modName, opts); err != nil {
+		b.Report.Step("%-28s %d addon(s) in %v", "payload "+name, len(pl.Addons), pl.ModNames)
+		if err := b.zipPayload(ch, &pl, opts); err != nil {
 			return nil, err
 		}
 		out = append(out, pl)
@@ -383,7 +494,7 @@ func (b *Builder) assemblePayloads(
 	return out, nil
 }
 
-func (b *Builder) zipPayload(ch *modcfg.Channel, pl *Payload, modName string, opts ReleaseOptions) error {
+func (b *Builder) zipPayload(ch *modcfg.Channel, pl *Payload, opts ReleaseOptions) error {
 	if !ch.Zip.Enabled || opts.NoZip {
 		return nil
 	}
@@ -409,9 +520,10 @@ func (b *Builder) zipPayload(ch *modcfg.Channel, pl *Payload, modName string, op
 		pl.Zip = dst
 		return nil
 	}
-	// The archive contains the @mod folder itself, so it extracts straight into
-	// a server or client directory.
-	if err := zipDir(pl.Dir, modName, dst); err != nil {
+	// The archive contains the @mod folder(s) themselves, so it extracts straight
+	// into a server or client directory. zipRoot is empty when pl.Dir already
+	// holds them, which is how a multi-folder payload keeps them separate.
+	if err := zipDir(pl.Dir, pl.zipRoot, dst); err != nil {
 		return fmt.Errorf("release: %w", err)
 	}
 	pl.Zip = dst
@@ -478,16 +590,6 @@ func (b *Builder) releaseDir(ch *modcfg.Channel) string {
 		return b.Host.Paths.ReleaseDir
 	}
 	return filepath.Join(b.Mod.Root, "release")
-}
-
-func (b *Builder) releaseModName(ch *modcfg.Channel) string {
-	if ch.Out != "" {
-		return filepath.Base(ch.Out)
-	}
-	for _, set := range b.Mod.SetsFor(ch) {
-		return set.ModName
-	}
-	return b.Mod.Mod.Name
 }
 
 func sideIn(side modcfg.Side, wanted []modcfg.Side) bool {

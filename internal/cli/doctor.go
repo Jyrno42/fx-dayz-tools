@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -99,6 +100,14 @@ func newDoctorCmd(g *global) *cobra.Command {
 
 			host, err := g.host()
 			if err != nil {
+				// A file that exists but does not parse is a different problem
+				// from no file at all, and `config init` is the wrong advice for
+				// it: --force would rewrite a config that needed one line changed.
+				if !errors.Is(err, machine.ErrNotConfigured) {
+					d.p.Line("Machine configuration cannot be read:")
+					d.p.Line("  %v", err)
+					return coded(ExitConfig, "fix that, or regenerate the file with `dayzmod config init --force`")
+				}
 				d.p.Line("No machine configuration: %v", err)
 				return coded(ExitPreflight, "run `dayzmod config init` first")
 			}
@@ -202,6 +211,7 @@ func (d *doctor) checkTools(host *machine.Config) {
 	d.optionalExe("DSCreateKey", host.DSCreateKey(), "needed only by `dayzmod keygen`")
 	d.optionalExe("pboProject", host.PboProject(), "needed only for an obfuscated release")
 	d.checkPboProjectVersion()
+	d.checkDePboDllVersion()
 	d.optionalExe("ExtractPbo", host.ExtractPbo(), "needed only to verify a packed prefix")
 
 	d.p.Section("Game installs")
@@ -233,6 +243,23 @@ func (d *doctor) checkPboProjectVersion() {
 		return
 	}
 	d.ok("pboProject version", installed+" (the version the packer was verified against)")
+}
+
+// checkDePboDllVersion reports the DePbo dll separately from pboProject. The dll
+// is where obfuscation and compression run, it versions on its own cadence, and
+// pboProject only states a minimum, so the pair can drift far enough apart to
+// fail inside the dll with pboProject itself looking current.
+func (d *doctor) checkDePboDllVersion() {
+	installed, tooOld := machine.DePboDllTooOld()
+	if installed == "" {
+		return
+	}
+	if tooOld {
+		d.warn("DePbo dll version", "installed "+installed+", but the packer needs at least "+
+			strconv.Itoa(machine.MinDePboDllVersion)+" -- reinstall DePboTools")
+		return
+	}
+	d.ok("DePbo dll version", installed)
 }
 
 func (d *doctor) checkKeys(host *machine.Config) {

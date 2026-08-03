@@ -12,18 +12,20 @@ const ppExe = `C:\Mikero\DePboTools\bin\pboProject.exe`
 // defaults mirror what the schema resolves an unset channel to.
 func defaultOpts() Options {
 	return Options{
-		Engine:        "dayz",
-		Exclude:       []string{"*.md", "*.tga"},
-		Compress:      true,
-		Noisy:         true,
-		Warnings:      true,
-		AutomakeStale: true,
-		CleanTemp:     true,
-		EncodePrefix:  true,
-		BinariseCpp:   false,
-		DeletePng:     false,
-		ConvertOgg:    false,
-		ShrinkP3D:     false,
+		Engine:            "dayz",
+		Exclude:           []string{"*.md", "*.tga"},
+		Compress:          true,
+		Noisy:             true,
+		Warnings:          false,
+		AutomakeStale:     true,
+		CleanTemp:         true,
+		NoPrefix:          false,
+		BinariseCpp:       false,
+		DeletePng:         false,
+		ConvertOgg:        false,
+		ShrinkP3D:         false,
+		DisablePngConvert: false,
+		RenameCfgPatches:  false,
 	}
 }
 
@@ -52,9 +54,11 @@ func TestArgvPolarisesEveryOption(t *testing.T) {
 	}
 	joined := strings.Join(argv, " ")
 
-	// Only these get emitted. Anything beyond the proven set makes pboProject
-	// reject the command line, blank its settings and fall back to its GUI.
-	for _, letter := range []string{"N", "C", "Z", "J", "B", "O"} {
+	// Only these get emitted. On 3.91 anything beyond the proven set makes
+	// pboProject reject the command line, blank its settings and fall back to its
+	// GUI. H and @ are a deliberate addition on top of that set: both change what
+	// the engine sees, so inheriting them from the registry is the worse risk.
+	for _, letter := range []string{"N", "C", "Z", "J", "B", "O", "H", "@"} {
 		hasPlus := contains(argv, "+"+letter)
 		hasMinus := contains(argv, "-"+letter)
 		if !hasPlus && !hasMinus {
@@ -68,12 +72,100 @@ func TestArgvPolarisesEveryOption(t *testing.T) {
 	if !contains(argv, "-P") {
 		t.Error("-P (do not pause) missing; the packer would block waiting for a keypress")
 	}
-	// Flags outside the proven set are deliberately absent, because passing them
-	// makes pboProject reject the whole command line.
+	// Flags outside the emitted set are deliberately absent, because passing them
+	// makes 3.91 reject the whole command line.
 	for _, letter := range []string{"R", "W", "D", "G", "T", "$"} {
 		if contains(argv, "+"+letter) || contains(argv, "-"+letter) {
 			t.Errorf("option %s is emitted, but it is outside the vector known to work", letter)
 		}
+	}
+}
+
+// +$ means "ship with no prefix" on 4.31, the opposite of what the 3.91
+// documentation said the same letter did. pboProject refuses to combine it with
+// obfuscation or a rename, so the packer refuses first, where the error is
+// visible. Getting this wrong ships a PBO the engine cannot address.
+func TestArgvRefusesNoPrefixCombinations(t *testing.T) {
+	p := &PboProject{Exe: ppExe}
+
+	j := job(true)
+	j.PboProject.NoPrefix = true
+	if _, err := p.Argv(j); err == nil {
+		t.Error("expected an error for no_prefix together with obfuscation")
+	}
+
+	j = job(false)
+	j.PboProject.NoPrefix = true
+	j.Label = "PinkTurtles"
+	if _, err := p.Argv(j); err == nil {
+		t.Error("expected an error for no_prefix together with a label")
+	}
+
+	// On its own it is merely unusual, not refused.
+	j = job(false)
+	j.PboProject.NoPrefix = true
+	if _, err := p.Argv(j); err != nil {
+		t.Errorf("no_prefix alone should be allowed: %v", err)
+	}
+}
+
+// The extensionless $PBOPREFIX$ is deprecated in 4.31, and a deprecation notice
+// is a failed pack once warnings are errors.
+func TestPreflightWritesTheExtendedPrefixName(t *testing.T) {
+	if prefixFileName != "$PBOPREFIX$.txt" {
+		t.Fatalf("prefixFileName = %q, want the .txt spelling", prefixFileName)
+	}
+
+	src := t.TempDir()
+	p := &PboProject{Exe: ppExe}
+	j := job(false)
+	j.SourceDir = src
+	j.OutDir = filepath.Join(t.TempDir(), "Addons")
+	j.WritePrefixFile = true
+
+	cleanup, err := p.Preflight(t.Context(), j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	if _, err := os.Stat(filepath.Join(src, "$PBOPREFIX$.txt")); err != nil {
+		t.Errorf("$PBOPREFIX$.txt was not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(src, "$PBOPREFIX$")); !os.IsNotExist(err) {
+		t.Error("the deprecated extensionless $PBOPREFIX$ was written")
+	}
+}
+
+// A repo that committed the old extensionless name keeps it, and does not end up
+// with a second prefix file next to it for pboProject to choose between.
+func TestPreflightLeavesALegacyPrefixFile(t *testing.T) {
+	src := t.TempDir()
+	committed := []byte("prefix=upstream\\thing\r\n")
+	if err := os.WriteFile(filepath.Join(src, legacyPrefixFileName), committed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &PboProject{Exe: ppExe}
+	j := job(false)
+	j.SourceDir = src
+	j.OutDir = filepath.Join(t.TempDir(), "Addons")
+	j.WritePrefixFile = true
+
+	cleanup, err := p.Preflight(t.Context(), j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(src, prefixFileName)); !os.IsNotExist(err) {
+		t.Error("a second prefix file was written alongside the committed one")
+	}
+	got, err := os.ReadFile(filepath.Join(src, legacyPrefixFileName))
+	if err != nil || string(got) != string(committed) {
+		t.Errorf("the committed prefix file was disturbed: %q, %v", got, err)
 	}
 }
 

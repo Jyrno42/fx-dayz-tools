@@ -21,10 +21,10 @@ type Cmd struct {
 	Args []string
 	Dir  string
 	Env  []string
-	// ShellExecute launches the command the way Explorer would instead of via
-	// CreateProcess. Exactly one tool needs it (see runViaShellExecute), and
-	// nothing else should set it without the same kind of evidence.
-	ShellExecute bool
+	// NeedsConsole runs the command as a child of cmd.exe, so it inherits a real
+	// console. Exactly one tool needs it, because it shells out internally (see
+	// runViaConsole), and nothing else should set it without the same evidence.
+	NeedsConsole bool
 }
 
 // String renders the command the way a user could paste it back into a shell,
@@ -101,8 +101,8 @@ func (e *Exec) Run(ctx context.Context, c Cmd) (Result, error) {
 	if e.OnStart != nil {
 		e.OnStart(c)
 	}
-	if c.ShellExecute {
-		return runViaShellExecute(ctx, c)
+	if c.NeedsConsole {
+		return runViaConsole(ctx, c)
 	}
 	return e.runDirect(ctx, c)
 }

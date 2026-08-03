@@ -203,6 +203,59 @@ launch:
 	}
 }
 
+// pboproject options, as a fragment that can have one key swapped per case.
+func pboProjectManifest(opts string) string {
+	return `
+version: 1
+mod: { id: t, name: "@t", visibility: private }
+repo: { pdrive_path: 'P:\projects\t' }
+addon_sets:
+  main:
+    source: mod
+    addons:
+      Logic: { policy: { side: both, obfuscate: true } }
+channels:
+  release:
+    packer: pboproject
+    sign: { key: test-key }
+    pboproject:
+` + opts + `
+    payloads:
+      all: { sides: [both] }
+launch:
+  mods:
+    - { name: "@t", source: self }
+`
+}
+
+// encode_prefix named the +/-$ flag with the opposite sense to what 4.31 gives
+// it, so carrying the value across would invert the setting. A repo still holding
+// the key has to be told that, not handed "unknown field".
+func TestEncodePrefixIsRejectedWithAnExplanation(t *testing.T) {
+	_, err := Parse([]byte(pboProjectManifest("      encode_prefix: true")))
+	if err == nil {
+		t.Fatal("expected an error for the removed encode_prefix key")
+	}
+	for _, want := range []string{"encode_prefix", "no_prefix", "reversed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// pboProject refuses to obfuscate a PBO with no prefix, in a GUI nobody is
+// watching. Catching it at parse time is the difference between a config error
+// and a release that failed for no stated reason.
+func TestNoPrefixCannotBeCombinedWithObfuscation(t *testing.T) {
+	_, err := Parse([]byte(pboProjectManifest("      no_prefix: true\n      prefix_file: never")))
+	if err == nil {
+		t.Fatal("expected an error for no_prefix with an obfuscated addon")
+	}
+	if !strings.Contains(err.Error(), "no prefix") {
+		t.Errorf("error should explain the refusal, got: %v", err)
+	}
+}
+
 // An addon that gets built and then dropped on the floor is wasted time at best,
 // and a missing file in a shipped payload at worst.
 func TestServerOnlyAddonNeedsAPayload(t *testing.T) {

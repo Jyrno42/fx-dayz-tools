@@ -295,19 +295,21 @@ func (b *Builder) job(ch *modcfg.Channel, set *modcfg.AddonSet, addonName string
 		job.NoScramble = addon.Policy.NoScramble
 		job.WritePrefixFile = p.PrefixFile == modcfg.PrefixAlways
 		job.PboProject = packer.Options{
-			Engine:        p.Engine,
-			Exclude:       p.Exclude,
-			Compress:      boolOrTrue(p.Compress),
-			Noisy:         boolOrTrue(p.Noisy),
-			Warnings:      boolOrTrue(p.Warnings),
-			AutomakeStale: boolOrTrue(p.AutomakeStale),
-			CleanTemp:     boolOrTrue(p.CleanTemp),
-			EncodePrefix:  boolOrTrue(p.EncodePrefix),
-			BinariseCpp:   boolOrFalse(p.BinariseCpp),
-			DeletePng:     boolOrFalse(p.DeletePng),
-			ConvertOgg:    boolOrFalse(p.ConvertOgg),
-			ShrinkP3D:     boolOrFalse(p.ShrinkP3D),
-			LogDir:        b.Host.Paths.PboTemp,
+			Engine:            p.Engine,
+			Exclude:           p.Exclude,
+			Compress:          boolOrTrue(p.Compress),
+			Noisy:             boolOrTrue(p.Noisy),
+			Warnings:          boolOrFalse(p.Warnings),
+			AutomakeStale:     boolOrTrue(p.AutomakeStale),
+			CleanTemp:         boolOrTrue(p.CleanTemp),
+			NoPrefix:          boolOrFalse(p.NoPrefix),
+			BinariseCpp:       boolOrFalse(p.BinariseCpp),
+			DeletePng:         boolOrFalse(p.DeletePng),
+			ConvertOgg:        boolOrFalse(p.ConvertOgg),
+			ShrinkP3D:         boolOrFalse(p.ShrinkP3D),
+			DisablePngConvert: boolOrFalse(p.DisablePngConvert),
+			RenameCfgPatches:  boolOrFalse(p.RenameCfgPatches),
+			LogDir:            b.Host.Paths.PboTemp,
 		}
 	}
 
