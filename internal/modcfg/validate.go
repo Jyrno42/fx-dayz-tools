@@ -392,6 +392,18 @@ func (c *Config) validateIncludes(add addFunc) {
 		if inc.Keys != "" && path.IsAbs(paths.ToSlash(inc.Keys)) {
 			add("include[%d].keys %q must be relative to the repo root", i, inc.Keys)
 		}
+		// Deliberately NOT checked against addon_sets[*].mod_name. An include is
+		// allowed to name a folder no addon set builds into, which is how a
+		// prebuilt server-only PBO gets a folder of its own without this repo
+		// packing anything into it. The folder still ships, because releaseStages
+		// gives every distinct include mod_name a stage and a payload draws from
+		// all of them.
+		//
+		// What is worth rejecting is a name DayZ could not resolve as a mod folder
+		// at all, which is the same rule mod.name and launch.mods[] already carry.
+		if inc.ModName != "" && !strings.HasPrefix(inc.ModName, "@") {
+			add("include[%d].mod_name %q must start with @ -- DayZ resolves mod folders by that prefix", i, inc.ModName)
+		}
 	}
 }
 

@@ -256,6 +256,45 @@ func TestNoPrefixCannotBeCombinedWithObfuscation(t *testing.T) {
 	}
 }
 
+// An include can name a folder no addon set builds into. That is how a prebuilt
+// server-only PBO gets a folder of its own without this repo packing anything
+// there. What it cannot do is name something DayZ would not resolve as a mod
+// folder.
+func TestIncludeModNameMustLookLikeAModFolder(t *testing.T) {
+	manifest := func(modName string) string {
+		return `
+version: 1
+mod: { id: t, name: "@t", visibility: private }
+repo: { pdrive_path: 'P:\projects	' }
+include:
+  - from: vendor/prebuilt
+    mod_name: "` + modName + `"
+addon_sets:
+  main:
+    source: mod
+    mod_name: "@t"
+    addons: { Logic: { policy: { side: both } } }
+channels:
+  dev: { packer: addonbuilder, deploy: [server], sign: false }
+launch:
+  mods:
+    - { name: "@t", source: self }
+`
+	}
+
+	if _, err := Parse([]byte(manifest("vendor-server"))); err == nil {
+		t.Error("expected an error for a mod_name with no @ prefix")
+	} else if !strings.Contains(err.Error(), "@") {
+		t.Errorf("the error should mention the @ prefix, got: %v", err)
+	}
+
+	// A folder nothing else builds into is legitimate, and is the reason the
+	// field exists at all.
+	if _, err := Parse([]byte(manifest("@vendor-server"))); err != nil {
+		t.Errorf("an include may name a folder no addon set builds into: %v", err)
+	}
+}
+
 // An addon that gets built and then dropped on the floor is wasted time at best,
 // and a missing file in a shipped payload at worst.
 func TestServerOnlyAddonNeedsAPayload(t *testing.T) {

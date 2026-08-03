@@ -89,7 +89,19 @@ func (b *Builder) releaseStages(ch *modcfg.Channel) []modStage {
 	}
 	if len(out) == 0 {
 		name := b.Mod.Mod.Name
+		seen[name] = true
 		out = append(out, modStage{ModName: name, Dir: filepath.Join(b.releaseDir(ch), name)})
+	}
+
+	// An include can name its own folder too, and those stages have to exist by
+	// the time Release clears and creates them. Appended after the set stages so
+	// stages[0] stays the primary, which everything else resolves against.
+	for _, inc := range b.Mod.Include {
+		if inc.ModName == "" || seen[inc.ModName] {
+			continue
+		}
+		seen[inc.ModName] = true
+		out = append(out, modStage{ModName: inc.ModName, Dir: filepath.Join(b.releaseDir(ch), inc.ModName)})
 	}
 	return out
 }
@@ -138,7 +150,6 @@ func (b *Builder) Release(ctx context.Context, opts ReleaseOptions) (*ReleaseRes
 	// client's folder is precisely what -serverMod= exists to avoid.
 	stages := b.releaseStages(ch)
 	primary := stages[0]
-	addonsDir := filepath.Join(primary.Dir, "Addons")
 
 	// A release never reuses whatever happened to be lying around. A stale PBO
 	// from a previous run is exactly the thing that ships by accident.
@@ -167,18 +178,16 @@ func (b *Builder) Release(ctx context.Context, opts ReleaseOptions) (*ReleaseRes
 	// Signing runs before the includes get staged, so the signer only ever sees
 	// PBOs this repo packed. A prebuilt PBO keeps whatever signature it came
 	// with.
-	if err := b.signRelease(ctx, ch, stages, opts, res); err != nil {
+	if err := b.signRelease(ctx, ch, stages, packed, opts, res); err != nil {
 		return nil, err
 	}
 
-	// Includes and channel extra files are properties of the mod as a whole, so
-	// they go to the primary folder rather than being duplicated into every one.
-	included, err := b.stageIncludes(b.Mod.Include, addonsDir, primary.Dir, b.Mod.ShipKeysEnabled(ch))
+	// Includes default to the primary folder but can name their own, so they
+	// resolve their own stage. Channel extra files are a property of the mod as a
+	// whole and stay on the primary one.
+	included, err := b.stageIncludes(b.Mod.Include, stages, primary, packed, b.Mod.ShipKeysEnabled(ch))
 	if err != nil {
 		return nil, err
-	}
-	for i := range included {
-		included[i].ModName = primary.ModName
 	}
 	packed = append(packed, included...)
 	res.Included = len(included)
@@ -274,6 +283,7 @@ func (b *Builder) signRelease(
 	ctx context.Context,
 	ch *modcfg.Channel,
 	stages []modStage,
+	packed []packedAddon,
 	opts ReleaseOptions,
 	res *ReleaseResult,
 ) error {
@@ -303,11 +313,24 @@ func (b *Builder) signRelease(
 
 	// pboProject signs during packing. AddonBuilder needs a separate pass, once
 	// per staged folder.
+	//
+	// Only folders this repo packed into. A folder that exists purely to receive
+	// prebuilt includes is still empty here, because includes are staged after
+	// signing so the signer never sees a PBO it did not produce. Handing the
+	// signer an empty directory would fail the release over nothing.
 	p, _ := b.packerFor(ch)
 	if !p.Caps().CanSignInline {
+		hasPacked := map[string]bool{}
+		for _, a := range packed {
+			hasPacked[a.ModName] = true
+		}
 		signer := &sign.Signer{Exe: b.Host.DSSignFile()}
 		b.Report.Step("%-28s signing with %q", "release", ch.Sign.Key)
 		for _, st := range stages {
+			if !hasPacked[st.ModName] {
+				b.Report.Detail("nothing packed into %s, so nothing to sign there", st.ModName)
+				continue
+			}
 			if _, err := signer.SignDir(ctx, b.Runner, filepath.Join(st.Dir, "Addons"), sign.Options{
 				PrivateKey: key.Private,
 				V2:         ch.Sign.V2,
@@ -411,7 +434,28 @@ func (b *Builder) assemblePayloads(
 	}
 
 	if len(ch.Payloads) == 0 {
+		// The staged folders are the single deliverable. One folder is the common
+		// case and needs no copy. With several, they get gathered under one
+		// directory so an include that named its own folder still gets zipped and
+		// hashed instead of quietly falling out of a green build.
+		//
+		// Gathered rather than zipped in place: releaseDir is shared between
+		// repos, so archiving it directly would sweep up everything else in there.
 		pl := Payload{Name: "all", Dir: primary.Dir, ModNames: []string{primary.ModName}, zipRoot: primary.ModName}
+		if len(stages) > 1 {
+			root := filepath.Join(b.releaseDir(ch), "payload-all")
+			pl.Dir, pl.zipRoot = root, ""
+			pl.ModNames = nil
+			for _, st := range stages {
+				pl.ModNames = append(pl.ModNames, st.ModName)
+				if b.Runner.DryRun() {
+					continue
+				}
+				if err := copyTree(st.Dir, filepath.Join(root, st.ModName)); err != nil {
+					return nil, fmt.Errorf("release: %w", err)
+				}
+			}
+		}
 		for _, a := range packed {
 			pl.Addons = append(pl.Addons, a.Name)
 		}

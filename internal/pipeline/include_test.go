@@ -35,6 +35,14 @@ func vendorDir(t *testing.T) (dir, keys string) {
 	return dir, keys
 }
 
+// oneStage wraps a single @mod folder as the stage table stageIncludes takes.
+// Its ModName is the folder's own name, which is what an include with no
+// mod_name resolves to.
+func oneStage(dir string) ([]modStage, modStage) {
+	st := modStage{ModName: filepath.Base(dir), Dir: dir}
+	return []modStage{st}, st
+}
+
 func builderFor(t *testing.T, root string, includes []modcfg.IncludeSpec) *Builder {
 	t.Helper()
 	cfg, host := testRepo(t)
@@ -50,7 +58,8 @@ func TestStageIncludesCopiesPBOsAndSignatures(t *testing.T) {
 	addons := filepath.Join(stage, "Addons")
 
 	b := builderFor(t, root, nil)
-	staged, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt"}}, addons, stage, false)
+	stages, primary := oneStage(stage)
+	staged, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt"}}, stages, primary, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +92,8 @@ func TestStageIncludesHonoursShipKeys(t *testing.T) {
 
 	stage := filepath.Join(t.TempDir(), "@pack")
 	b := builderFor(t, root, nil)
-	if _, err := b.stageIncludes(spec, filepath.Join(stage, "Addons"), stage, false); err != nil {
+	stages, primary := oneStage(stage)
+	if _, err := b.stageIncludes(spec, stages, primary, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(stage, "keys")); !os.IsNotExist(err) {
@@ -92,7 +102,8 @@ func TestStageIncludesHonoursShipKeys(t *testing.T) {
 
 	stage2 := filepath.Join(t.TempDir(), "@pack")
 	b2 := builderFor(t, root, nil)
-	if _, err := b2.stageIncludes(spec, filepath.Join(stage2, "Addons"), stage2, true); err != nil {
+	stages2, primary2 := oneStage(stage2)
+	if _, err := b2.stageIncludes(spec, stages2, primary2, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(stage2, "keys", "Vendor.bikey")); err != nil {
@@ -106,10 +117,11 @@ func TestStageIncludesSideAndOptional(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "@pack")
 
 	b := builderFor(t, root, nil)
+	stages, primary := oneStage(stage)
 	staged, err := b.stageIncludes([]modcfg.IncludeSpec{
 		{From: "prebuilt", Side: modcfg.SideServer},
 		{From: "does-not-exist", Optional: true},
-	}, filepath.Join(stage, "Addons"), stage, false)
+	}, stages, primary, nil, false)
 	if err != nil {
 		t.Fatalf("an optional missing directory should be skipped, got %v", err)
 	}
@@ -122,7 +134,7 @@ func TestStageIncludesSideAndOptional(t *testing.T) {
 	// Not optional, so a missing directory is a real error.
 	b2 := builderFor(t, root, nil)
 	_, err = b2.stageIncludes([]modcfg.IncludeSpec{{From: "does-not-exist"}},
-		filepath.Join(stage, "Addons"), stage, false)
+		stages, primary, nil, false)
 	if err == nil {
 		t.Error("a missing non-optional include directory should fail")
 	}
@@ -130,9 +142,115 @@ func TestStageIncludesSideAndOptional(t *testing.T) {
 
 func TestStageIncludesRejectsEmptyFrom(t *testing.T) {
 	b := builderFor(t, t.TempDir(), nil)
-	_, err := b.stageIncludes([]modcfg.IncludeSpec{{}}, "addons", "stage", false)
+	stages, primary := oneStage("stage")
+	_, err := b.stageIncludes([]modcfg.IncludeSpec{{}}, stages, primary, nil, false)
 	if err == nil || !strings.Contains(err.Error(), "from") {
 		t.Errorf("expected an error naming `from`, got %v", err)
+	}
+}
+
+// The regression that matters. An entry with no mod_name has to keep landing in
+// the primary folder, which is the only place they ever went.
+func TestStageIncludesWithoutModNameLandInPrimary(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+	release := t.TempDir()
+
+	primary := modStage{ModName: "@pack", Dir: filepath.Join(release, "@pack")}
+	other := modStage{ModName: "@pack-server", Dir: filepath.Join(release, "@pack-server")}
+	stages := []modStage{primary, other}
+
+	b := builderFor(t, root, nil)
+	staged, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt"}}, stages, primary, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range staged {
+		if a.ModName != "@pack" {
+			t.Errorf("%s went to %q, want the primary folder", a.Name, a.ModName)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(primary.Dir, "Addons", "Signed.pbo")); err != nil {
+		t.Errorf("not staged into the primary folder: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(other.Dir, "Addons", "Signed.pbo")); !os.IsNotExist(err) {
+		t.Error("staged into a folder it did not ask for")
+	}
+}
+
+// A prebuilt server-only PBO needs a folder of its own, because side alone only
+// picks payloads and a client loading the folder loads every PBO in it. The key
+// follows the folder, since that is the one the operator installs.
+func TestStageIncludesModNameGetsItsOwnFolder(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+	release := t.TempDir()
+
+	primary := modStage{ModName: "@pack", Dir: filepath.Join(release, "@pack")}
+	other := modStage{ModName: "@pack-server", Dir: filepath.Join(release, "@pack-server")}
+	stages := []modStage{primary, other}
+
+	b := builderFor(t, root, nil)
+	staged, err := b.stageIncludes([]modcfg.IncludeSpec{
+		{From: "prebuilt", Keys: "prebuilt/keys", ModName: "@pack-server", Side: modcfg.SideServer},
+	}, stages, primary, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range staged {
+		if a.ModName != "@pack-server" {
+			t.Errorf("%s went to %q, want @pack-server", a.Name, a.ModName)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(other.Dir, "Addons", "Signed.pbo")); err != nil {
+		t.Errorf("not staged into its own folder: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(primary.Dir, "Addons", "Signed.pbo")); !os.IsNotExist(err) {
+		t.Error("a server-only include leaked into the primary folder")
+	}
+	if _, err := os.Stat(filepath.Join(other.Dir, "keys", "Vendor.bikey")); err != nil {
+		t.Errorf("the key should follow the folder it belongs to: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(primary.Dir, "keys", "Vendor.bikey")); !os.IsNotExist(err) {
+		t.Error("the key was shipped in the primary folder instead")
+	}
+}
+
+// An included PBO landing on top of one this repo packed would overwrite it
+// silently. The names are not known until the source directory is read, so
+// validation cannot catch this and the pack has already written there.
+func TestStageIncludesRefusesToOverwriteAPackedAddon(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+	stage := filepath.Join(t.TempDir(), "@pack")
+	stages, primary := oneStage(stage)
+
+	packed := []packedAddon{{Name: "Signed", ModName: primary.ModName}}
+
+	b := builderFor(t, root, nil)
+	_, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt"}}, stages, primary, packed, false)
+	if err == nil {
+		t.Fatal("expected an error when an include collides with a packed addon")
+	}
+	if !strings.Contains(err.Error(), "Signed") {
+		t.Errorf("the error should name the colliding PBO, got %v", err)
+	}
+}
+
+// A mod_name that is not a staged folder is caught rather than silently copying
+// nowhere. Validation only checks that the name looks like a mod folder, since
+// naming one no addon set builds into is allowed, so this is the check that
+// catches a typo.
+func TestStageIncludesRejectsUnstagedModName(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+	stage := filepath.Join(t.TempDir(), "@pack")
+	stages, primary := oneStage(stage)
+
+	b := builderFor(t, root, nil)
+	_, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt", ModName: "@nope"}}, stages, primary, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "@nope") {
+		t.Errorf("expected an error naming the unknown folder, got %v", err)
 	}
 }
 
@@ -146,7 +264,8 @@ func TestStageIncludesDryRunCopiesNothing(t *testing.T) {
 	cfg.Root = root
 	b := &Builder{Mod: cfg, Host: host, Runner: &proc.Dry{}, Report: silent{}}
 
-	staged, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt"}}, addons, stage, true)
+	stages, primary := oneStage(stage)
+	staged, err := b.stageIncludes([]modcfg.IncludeSpec{{From: "prebuilt"}}, stages, primary, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

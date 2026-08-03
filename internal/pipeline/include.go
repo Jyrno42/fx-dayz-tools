@@ -17,13 +17,45 @@ import (
 // re-signing would throw away the original chain of trust. A pack legitimately
 // mixes signed and unsigned PBOs, so an unsigned one gets reported but is never
 // an error.
-func (b *Builder) stageIncludes(includes []modcfg.IncludeSpec, addonsDir, stage string, shipKeys bool) ([]packedAddon, error) {
+// An entry can name its own @mod folder with mod_name, which is how a prebuilt
+// server-only PBO gets a folder an operator can -serverMod=. Empty resolves to
+// the primary stage, the only behaviour there used to be.
+func (b *Builder) stageIncludes(
+	includes []modcfg.IncludeSpec,
+	stages []modStage,
+	primary modStage,
+	packed []packedAddon,
+	shipKeys bool,
+) ([]packedAddon, error) {
 	var staged []packedAddon
+
+	stageDir := map[string]string{}
+	for _, st := range stages {
+		stageDir[st.ModName] = st.Dir
+	}
+	// Guards against a silent overwrite. packRelease has already written into
+	// these directories, and an include's PBO names are not known until the
+	// source directory is read, so validation cannot catch this statically.
+	packedInto := map[string]string{}
+	for _, a := range packed {
+		packedInto[strings.ToLower(a.ModName+"/"+a.Name)] = a.Name
+	}
 
 	for _, inc := range includes {
 		if inc.From == "" {
 			return nil, fmt.Errorf("include: an entry has no `from` directory")
 		}
+
+		modName := inc.ModName
+		if modName == "" {
+			modName = primary.ModName
+		}
+		dir, ok := stageDir[modName]
+		if !ok {
+			return nil, fmt.Errorf("include: %s names mod_name %q, which is not a staged mod folder", inc.From, modName)
+		}
+		addonsDir := filepath.Join(dir, "Addons")
+
 		src := filepath.Join(b.Mod.Root, filepath.FromSlash(inc.From))
 
 		if _, err := os.Stat(src); err != nil {
@@ -50,6 +82,12 @@ func (b *Builder) stageIncludes(includes []modcfg.IncludeSpec, addonsDir, stage 
 		signed, unsigned := 0, 0
 		for _, pbo := range pbos {
 			name := filepath.Base(pbo)
+			addonName := strings.TrimSuffix(name, filepath.Ext(name))
+			if other, clash := packedInto[strings.ToLower(modName+"/"+addonName)]; clash {
+				return nil, fmt.Errorf(
+					"include: %s would copy %s into %s, where this repo already packed %s; one would overwrite the other",
+					inc.From, name, modName, other)
+			}
 			if !b.Runner.DryRun() {
 				if err := os.MkdirAll(addonsDir, 0o755); err != nil {
 					return nil, fmt.Errorf("include: %w", err)
@@ -78,11 +116,13 @@ func (b *Builder) stageIncludes(includes []modcfg.IncludeSpec, addonsDir, stage 
 			}
 
 			staged = append(staged, packedAddon{
-				Name:     strings.TrimSuffix(name, filepath.Ext(name)),
+				Name:     addonName,
 				Side:     side,
 				PBO:      filepath.Join(addonsDir, name),
+				ModName:  modName,
 				Included: true,
 			})
+			packedInto[strings.ToLower(modName+"/"+addonName)] = addonName
 		}
 
 		detail := fmt.Sprintf("%d PBO(s), %d signed", len(pbos), signed)
@@ -91,7 +131,9 @@ func (b *Builder) stageIncludes(includes []modcfg.IncludeSpec, addonsDir, stage 
 		}
 		b.Report.Step("%-28s %s", "include "+inc.From, detail)
 
-		if err := b.stageIncludeKeys(inc, stage, shipKeys); err != nil {
+		// The key goes in the folder the operator actually installs, which for a
+		// server-only include is its own folder rather than the primary one.
+		if err := b.stageIncludeKeys(inc, dir, shipKeys); err != nil {
 			return nil, err
 		}
 	}

@@ -162,6 +162,17 @@ type IncludeSpec struct {
 	Keys string `yaml:"keys"`
 	// Side decides which release payloads these PBOs land in.
 	Side Side `yaml:"side"`
+	// ModName is the @mod folder these PBOs are copied into. Empty means the
+	// primary staged folder, which is the only behaviour that existed before.
+	// Naming another folder is how a prebuilt server-only PBO gets a folder an
+	// operator can -serverMod=: side alone selects payloads, and a client loading
+	// the folder loads every PBO in it.
+	//
+	// Deliberately NOT defaulted at load time the way AddonSet.ModName is. The
+	// primary stage is filepath.Base(ch.Out) when a channel sets out:, which is
+	// not mod.name, so baking a default in here would route includes to a folder
+	// that out: never creates. It resolves against the primary stage instead.
+	ModName string `yaml:"mod_name"`
 	// Optional skips the entry when the directory is absent.
 	Optional bool `yaml:"optional"`
 }
@@ -604,15 +615,4 @@ func (c *Config) ShipKeysEnabled(ch *Channel) bool {
 		return *ch.ShipKeys
 	}
 	return true
-}
-
-// IncludesFor returns the include entries that belong in a payload side.
-func (c *Config) IncludesFor(side Side) []IncludeSpec {
-	var out []IncludeSpec
-	for _, inc := range c.Include {
-		if inc.Side == side || side == "" {
-			out = append(out, inc)
-		}
-	}
-	return out
 }

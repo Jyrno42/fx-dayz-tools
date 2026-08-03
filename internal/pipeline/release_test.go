@@ -202,6 +202,90 @@ func TestPayloadSpanningTwoSetsKeepsTheFoldersApart(t *testing.T) {
 	t.Fatal("no server payload")
 }
 
+// A repo with no payloads: declared ships its staged folders as the single
+// deliverable. Before includes could name their own folder there was only ever
+// one, so the branch used the primary and ignored the rest. An include folder
+// would then be staged, populated and signed around, and never zipped or hashed:
+// a green build missing a folder.
+func TestNoPayloadsShipsEveryStagedFolder(t *testing.T) {
+	cfg, host := splitRepo(t)
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Payloads = nil
+
+	b := &Builder{Mod: cfg, Host: host, Report: silent{}, Runner: &dryRunner{}}
+	stages := b.releaseStages(ch)
+	packed := []packedAddon{
+		{Name: "Core", Side: modcfg.SideBoth, ModName: "@t"},
+		{Name: "ServerOnly", Side: modcfg.SideServer, ModName: "@t-server"},
+	}
+
+	payloads, err := b.assemblePayloads(ch, stages, packed, ReleaseOptions{NoZip: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("expected one payload, got %d", len(payloads))
+	}
+	pl := payloads[0]
+	if len(pl.ModNames) != len(stages) {
+		t.Errorf("payload folders = %v, want all %d staged folders", pl.ModNames, len(stages))
+	}
+	// zipRoot empty means Dir already holds the folders, so they extract unmerged.
+	if pl.zipRoot != "" {
+		t.Errorf("zipRoot = %q, want empty so the folders stay separate", pl.zipRoot)
+	}
+	// Gathered under its own directory, never the shared release dir, which
+	// holds other repos' output too.
+	if filepath.Base(pl.Dir) != "payload-all" {
+		t.Errorf("payload dir = %q, want a payload-all directory", pl.Dir)
+	}
+	if pl.Dir == host.Paths.ReleaseDir {
+		t.Error("zipping the shared release dir would sweep up other repos")
+	}
+}
+
+// An include that names its own folder has to get a stage, and it has to come
+// after the set stages so stages[0] stays the primary everything resolves
+// against. Without the stage the folder is never created and payload assembly
+// cannot find it.
+func TestReleaseStagesIncludeModNames(t *testing.T) {
+	cfg, host := splitRepo(t)
+	cfg.Include = []modcfg.IncludeSpec{
+		{From: "vendor/plain"},
+		{From: "vendor/server", ModName: "@vendor-server"},
+	}
+
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Builder{Mod: cfg, Host: host, Report: silent{}}
+	stages := b.releaseStages(ch)
+
+	if stages[0].ModName != "@t" {
+		t.Errorf("stages[0] = %q, want the primary to stay first", stages[0].ModName)
+	}
+	var names []string
+	for _, st := range stages {
+		names = append(names, st.ModName)
+	}
+	if len(stages) != 3 {
+		t.Fatalf("stages = %v, want the two sets plus the include folder", names)
+	}
+	if stages[2].ModName != "@vendor-server" {
+		t.Errorf("stages = %v, want the include folder appended last", names)
+	}
+	// An include with no mod_name adds nothing; it rides in the primary.
+	for _, st := range stages {
+		if st.ModName == "" {
+			t.Error("an include without mod_name should not create a stage")
+		}
+	}
+}
+
 type dryRunner struct{ fakeRunner }
 
 func (dryRunner) DryRun() bool { return true }
