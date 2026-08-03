@@ -108,6 +108,18 @@ func (b *Builder) Build(ctx context.Context, opts Options) ([]Outcome, error) {
 		}
 	}
 
+	// After the packed addons, so a failure here does not lose their lockfile
+	// entries. Skipped when the run is narrowed to one set or addon, since the
+	// caller asked for that one thing rather than a whole install.
+	if opts.Set == "" && opts.Addon == "" {
+		if err := b.deployIncludes(ch, opts); err != nil {
+			if saveErr := lock.Save(); saveErr != nil {
+				b.Report.Detail("could not save the lockfile: %v", saveErr)
+			}
+			return outcomes, err
+		}
+	}
+
 	if !b.Runner.DryRun() {
 		b.pruneLockfile(lock)
 		if err := lock.Save(); err != nil {
@@ -363,6 +375,121 @@ func (b *Builder) deploy(ch *modcfg.Channel, set *modcfg.AddonSet, pbo string) (
 		done = append(done, dest)
 	}
 	return done, nil
+}
+
+// deployIncludes copies prebuilt PBOs into the game installs, so a pack's
+// vendored dependencies are present for the dev loop.
+//
+// Without this a pack can only be tested by building it, releasing it, and
+// installing the result by hand, because the vendored mod is not in the install
+// at all. launch.mods cannot fill the gap either: source: path passes its value
+// verbatim to both -mod= and -serverMod=, so it would need an absolute repo path
+// in dayz.yml, which is the one thing that file is meant never to hold.
+//
+// An include naming its own mod_name lands in that folder, which is what lets a
+// prebuilt server-only mod stay off the client through -serverMod= exactly as a
+// packed one does.
+func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
+	includes := b.Mod.IncludesFor(ch.Name)
+	if len(includes) == 0 || len(ch.Deploy) == 0 {
+		return nil
+	}
+
+	primary := b.Mod.Mod.Name
+	if sets := b.Mod.SetsFor(ch); len(sets) > 0 {
+		primary = sets[0].ModName
+	}
+
+	for _, inc := range includes {
+		src := filepath.Join(b.Mod.Root, filepath.FromSlash(inc.From))
+		if _, err := os.Stat(src); err != nil {
+			if inc.Optional && os.IsNotExist(err) {
+				b.Report.Detail("skipped %s (optional, not present)", inc.From)
+				continue
+			}
+			return fmt.Errorf("include: %s: %w", inc.From, err)
+		}
+
+		pbos, err := pbosIn(src)
+		if err != nil {
+			return err
+		}
+		if len(pbos) == 0 {
+			if inc.Optional {
+				continue
+			}
+			return fmt.Errorf("include: %s contains no .pbo files", inc.From)
+		}
+
+		modName := inc.ModName
+		if modName == "" {
+			modName = primary
+		}
+
+		copied := 0
+		for _, target := range ch.Deploy {
+			root := b.Host.Paths.DayZClient
+			if target == modcfg.TargetServer {
+				root = b.Host.Paths.DayZServer
+			}
+			if root == "" {
+				return fmt.Errorf("cannot deploy %s to %s: the install path is not configured", inc.From, target)
+			}
+			dest := filepath.Join(root, modName, "Addons")
+
+			for _, pbo := range pbos {
+				files := []string{pbo}
+				sigs, err := filepath.Glob(pbo + ".*.bisign")
+				if err != nil {
+					return fmt.Errorf("include: %w", err)
+				}
+				files = append(files, sigs...)
+
+				for _, f := range files {
+					dst := filepath.Join(dest, filepath.Base(f))
+					if b.Runner.DryRun() {
+						b.Report.Detail("would copy %s -> %s", filepath.Base(f), dest)
+						copied++
+						continue
+					}
+					// Prebuilt PBOs are large and rarely change, so an unchanged
+					// one is left alone rather than recopied on every build.
+					if !opts.Force && sameFile(f, dst) {
+						continue
+					}
+					if err := os.MkdirAll(dest, 0o755); err != nil {
+						return fmt.Errorf("creating %s: %w", dest, err)
+					}
+					if err := copyFile(f, dst); err != nil {
+						return fmt.Errorf("include: %s: %w", filepath.Base(f), err)
+					}
+					copied++
+				}
+			}
+		}
+
+		if copied > 0 {
+			b.Report.Step("%-28s %d file(s) -> %s", "include "+inc.From, copied, modName)
+		} else {
+			b.Report.Detail("include %s already current in %s", inc.From, modName)
+		}
+	}
+	return nil
+}
+
+// sameFile reports whether dst already holds src, by size and modification
+// time. Hashing a vendored mod on every build would cost more than the copy it
+// saves.
+func sameFile(src, dst string) bool {
+	s, err := os.Stat(src)
+	if err != nil {
+		return false
+	}
+	d, err := os.Stat(dst)
+	if err != nil {
+		return false
+	}
+	return s.Size() == d.Size() && !s.ModTime().After(d.ModTime())
 }
 
 func (b *Builder) packerFor(ch *modcfg.Channel) (packer.Packer, error) {

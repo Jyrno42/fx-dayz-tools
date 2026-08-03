@@ -96,7 +96,7 @@ func (b *Builder) releaseStages(ch *modcfg.Channel) []modStage {
 	// An include can name its own folder too, and those stages have to exist by
 	// the time Release clears and creates them. Appended after the set stages so
 	// stages[0] stays the primary, which everything else resolves against.
-	for _, inc := range b.Mod.Include {
+	for _, inc := range b.Mod.IncludesFor(ch.Name) {
 		if inc.ModName == "" || seen[inc.ModName] {
 			continue
 		}
@@ -185,7 +185,7 @@ func (b *Builder) Release(ctx context.Context, opts ReleaseOptions) (*ReleaseRes
 	// Includes default to the primary folder but can name their own, so they
 	// resolve their own stage. Channel extra files are a property of the mod as a
 	// whole and stay on the primary one.
-	included, err := b.stageIncludes(b.Mod.Include, stages, primary, packed, b.Mod.ShipKeysEnabled(ch))
+	included, err := b.stageIncludes(b.Mod.IncludesFor(ch.Name), stages, primary, packed, b.Mod.ShipKeysEnabled(ch))
 	if err != nil {
 		return nil, err
 	}

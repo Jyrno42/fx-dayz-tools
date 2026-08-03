@@ -173,6 +173,10 @@ type IncludeSpec struct {
 	// not mod.name, so baking a default in here would route includes to a folder
 	// that out: never creates. It resolves against the primary stage instead.
 	ModName string `yaml:"mod_name"`
+	// Channels restricts this entry to the named channels. Empty means all,
+	// which includes the dev loop: a pack's vendored dependency has to be in the
+	// game installs for `dev` to boot at all, not just in a release payload.
+	Channels []string `yaml:"channels"`
 	// Optional skips the entry when the directory is absent.
 	Optional bool `yaml:"optional"`
 }
@@ -528,6 +532,19 @@ func (c *Config) Channel(name string) (*Channel, error) {
 		return nil, fmt.Errorf("no channel %q in %s (have: %s)", name, FileName, strings.Join(c.ChannelNames(), ", "))
 	}
 	return ch, nil
+}
+
+// IncludesFor returns the prebuilt PBO entries that apply to a channel, in
+// declared order. An entry with no channels restriction applies to all of them.
+func (c *Config) IncludesFor(channel string) []IncludeSpec {
+	var out []IncludeSpec
+	for _, inc := range c.Include {
+		if len(inc.Channels) > 0 && !contains(inc.Channels, channel) {
+			continue
+		}
+		out = append(out, inc)
+	}
+	return out
 }
 
 // SetsFor returns the addon sets a channel builds, in a stable order, honouring

@@ -276,3 +276,125 @@ func TestStageIncludesDryRunCopiesNothing(t *testing.T) {
 		t.Error("a dry run must not copy anything")
 	}
 }
+
+// A pack's vendored dependency has to reach the game installs, or the dev loop
+// cannot boot: the mod is simply not there. launch.mods cannot cover for it
+// either, so the build has to put it in place.
+func TestDeployIncludesReachesTheGameInstalls(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	cfg, host := testRepo(t)
+	cfg.Root = root
+	cfg.Include = []modcfg.IncludeSpec{
+		{From: "prebuilt"},
+		{From: "prebuilt", ModName: "@vendor-server"},
+	}
+	client := t.TempDir()
+	server := t.TempDir()
+	host.Paths.DayZClient = client
+	host.Paths.DayZServer = server
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Deploy = []modcfg.Target{modcfg.TargetClient, modcfg.TargetServer}
+
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, install := range []string{client, server} {
+		// No mod_name rides in the primary folder, which is what the addon sets
+		// build into.
+		if _, err := os.Stat(filepath.Join(install, "@t", "Addons", "Signed.pbo")); err != nil {
+			t.Errorf("%s: include did not reach the primary folder: %v", install, err)
+		}
+		// Its signature comes with it, since nothing re-signs an included PBO.
+		if _, err := os.Stat(filepath.Join(install, "@t", "Addons", "Signed.pbo.Vendor.bisign")); err != nil {
+			t.Errorf("%s: the original signature was left behind: %v", install, err)
+		}
+		// A named folder is what keeps a prebuilt server-only mod off the client,
+		// the same way a packed one stays off it.
+		if _, err := os.Stat(filepath.Join(install, "@vendor-server", "Addons", "Signed.pbo")); err != nil {
+			t.Errorf("%s: include did not reach its own folder: %v", install, err)
+		}
+	}
+}
+
+// An include restricted to another channel must not reach the dev installs.
+// Without this the deploy could ignore channels entirely and nothing would say
+// so.
+func TestDeployIncludesHonoursChannels(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	cfg, host := testRepo(t)
+	cfg.Root = root
+	cfg.Include = []modcfg.IncludeSpec{{From: "prebuilt", Channels: []string{"release"}}}
+	client := t.TempDir()
+	host.Paths.DayZClient = client
+	host.Paths.DayZServer = t.TempDir()
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Deploy = []modcfg.Target{modcfg.TargetClient}
+
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(client, "@t", "Addons", "Signed.pbo")); !os.IsNotExist(err) {
+		t.Error("a release-only include reached the dev install")
+	}
+}
+
+// Copying a vendored mod on every build would make the dev loop pay for files
+// that never change.
+func TestDeployIncludesSkipsUnchangedFiles(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	cfg, host := testRepo(t)
+	cfg.Root = root
+	cfg.Include = []modcfg.IncludeSpec{{From: "prebuilt"}}
+	client := t.TempDir()
+	host.Paths.DayZClient = client
+	host.Paths.DayZServer = t.TempDir()
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Deploy = []modcfg.Target{modcfg.TargetClient}
+
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(client, "@t", "Addons", "Signed.pbo")
+	first, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.ModTime().Equal(second.ModTime()) {
+		t.Error("an unchanged include was copied again")
+	}
+
+	// --force copies regardless, which is what it is for.
+	if err := b.deployIncludes(ch, Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+}

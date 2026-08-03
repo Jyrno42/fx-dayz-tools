@@ -113,8 +113,10 @@ undo one by accident:
 - **Keeping a PBO off clients takes a separate `@mod` folder**, not just
   `side: server`. `side` picks which payload a PBO reaches, but a client loading a
   folder loads everything in it, so the only structural guarantee is a folder of
-  its own on `-serverMod=`. A release stages one folder per addon set, and an
-  `include:` entry can name its own for a prebuilt server-only PBO.
+  its own on `-serverMod=`. A release stages one folder per addon set, an
+  `include:` entry can name its own for a prebuilt server-only PBO, and the dev
+  loop deploys those folders too so a pack can be tested without releasing it
+  first.
 - **`.bikey` distribution follows `mod.visibility`.** I state it once per mod
   instead of as a flag in a command string, where one typo publishes a private key.
 - **Included PBOs are never re-signed.** A pack mixes signed and unsigned PBOs from
