@@ -44,11 +44,16 @@ reported along with the exact config key you need to fill in by hand.
 
 ## Status
 
-I use it daily. Building, deploying, the dev loop, `scriptcheck` and AddonBuilder
-releases are all verified against real repos. My largest mod is fully migrated, and
-a server-only mod ships signed releases through it. The pboProject path is verified
-at the argv level and packs correctly, but I have not yet pushed a complete
-obfuscated release out through it.
+I use it daily. Building, deploying, the dev loop, `scriptcheck` and releases
+through both packers are all verified against real repos. My largest mod is fully
+migrated, and a server-only mod ships signed releases through it.
+
+The pboProject path is verified end to end rather than at the argv level: three
+PBOs across two mod folders, signed and obfuscated, round-tripped with
+`ExtractPbo` to confirm the per-addon `+O`/`-O` polarity, then booted with every
+script module compiling. Booting it is what proves the obfuscation, since a class
+resolved out of a separately obfuscated PBO fails in a way that looks exactly
+like a missing addon.
 
 | Area | State |
 |---|---|
@@ -60,8 +65,9 @@ obfuscated release out through it.
 | `build` (pack and deploy) | done |
 | `server`, `client`, `dev`, `wait`, `kill` | done |
 | `scriptcheck` (Enforce compile gate) | done |
-| `release` (pack, sign, payload split, zip, manifest) | done via AddonBuilder |
-| pboProject packer, per-PBO obfuscation split | done, verified against pboProject 3.91 only |
+| `release` (pack, sign, payload split, zip, manifest) | done, both packers |
+| pboProject packer, per-PBO obfuscation split | done, verified against 4.31 |
+| one `@mod` folder per addon set in a release | done |
 | `hooks run` for repo-specific generators and tests | done |
 | `init` (scaffold a new mod repo) | done |
 | packs: `include:` prebuilt PBOs, vendored submodule source | done |
@@ -85,9 +91,14 @@ undo one by accident:
   the mod loads nothing, silently.
 - **pboProject options persist in the GUI registry.** Straight from Mikero's docs:
   *"If you +Obfuscate a pbo, all subsequent invocations of pboProject will continue
-  to obfuscate until turned off."* So every invocation emits a complete, explicitly
-  polarised flag vector (`+O` or `-O`, never neither) and passes `-R` so the tool
-  never writes its options back.
+  to obfuscate until turned off."* So every invocation emits an explicitly polarised
+  flag vector (`+O` or `-O`, never neither) for the options it states. `-R` is not
+  among them, because 3.91 rejects the whole command line when it is present.
+- **Read pboProject's flag polarity from the binary, not its docs.** `+$` means
+  ship *without* a prefix on 4.31, the opposite of what the 3.91 documentation said
+  the same letter did, and the shipped `.docx` still documents options the binary
+  no longer has. A setting carried across on the old wording ships PBOs the engine
+  cannot address.
 - **Binarising is on by default.** That is AddonBuilder's own default, and
   `model.cfg` only gets applied when binarising. pboProject's `-B` is a different
   thing entirely: it concerns `config.cpp` and `mission.sqm` rather than models, and
@@ -99,6 +110,11 @@ undo one by accident:
   the asymmetry wrong. A server-side-only mod is `side: server`, which routes it to
   `-serverMod=`. Dropping its PBO into the server's own `Addons` folder merges the
   config but never compiles its scripts, so the mod silently does nothing.
+- **Keeping a PBO off clients takes a separate `@mod` folder**, not just
+  `side: server`. `side` picks which payload a PBO reaches, but a client loading a
+  folder loads everything in it, so the only structural guarantee is a folder of
+  its own on `-serverMod=`. A release stages one folder per addon set, and an
+  `include:` entry can name its own for a prebuilt server-only PBO.
 - **`.bikey` distribution follows `mod.visibility`.** I state it once per mod
   instead of as a flag in a command string, where one typo publishes a private key.
 - **Included PBOs are never re-signed.** A pack mixes signed and unsigned PBOs from
