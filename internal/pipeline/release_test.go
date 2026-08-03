@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/machine"
@@ -194,7 +195,8 @@ func TestPayloadSpanningTwoSetsKeepsTheFoldersApart(t *testing.T) {
 		if pl.zipRoot != "" {
 			t.Errorf("zipRoot = %q, want empty so the folders stay separate", pl.zipRoot)
 		}
-		if filepath.Base(pl.Dir) != "payload-server" {
+		// Namespaced by mod id, because release_dir is shared between repos.
+		if filepath.Base(pl.Dir) != "t-payload-server" {
 			t.Errorf("payload dir = %q, want the folder holding both @mod dirs", pl.Dir)
 		}
 		return
@@ -239,8 +241,8 @@ func TestNoPayloadsShipsEveryStagedFolder(t *testing.T) {
 	}
 	// Gathered under its own directory, never the shared release dir, which
 	// holds other repos' output too.
-	if filepath.Base(pl.Dir) != "payload-all" {
-		t.Errorf("payload dir = %q, want a payload-all directory", pl.Dir)
+	if filepath.Base(pl.Dir) != "t-payload-all" {
+		t.Errorf("payload dir = %q, want a namespaced payload-all directory", pl.Dir)
 	}
 	if pl.Dir == host.Paths.ReleaseDir {
 		t.Error("zipping the shared release dir would sweep up other repos")
@@ -289,3 +291,156 @@ func TestReleaseStagesIncludeModNames(t *testing.T) {
 type dryRunner struct{ fakeRunner }
 
 func (dryRunner) DryRun() bool { return true }
+
+// only narrows a run to one payload, so a fixture that declares several does not
+// fail on the ones a test did not stage an addon for.
+func only(name string) ReleaseOptions {
+	return ReleaseOptions{NoZip: true, Payloads: []string{name}}
+}
+
+// realBuilder assembles for real, since these defects are all about what ends up
+// on disk rather than what the payload struct says.
+func realBuilder(t *testing.T) (*Builder, *modcfg.Config, *machine.Config) {
+	t.Helper()
+	cfg, host := splitRepo(t)
+	return &Builder{Mod: cfg, Host: host, Report: silent{}, Runner: &fakeRunner{}}, cfg, host
+}
+
+// stageAddon puts a PBO where packRelease would have left it.
+func stageAddon(t *testing.T, host *machine.Config, modName, addon string) string {
+	t.Helper()
+	dir := filepath.Join(host.Paths.ReleaseDir, modName, "Addons")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, addon+".pbo")
+	if err := os.WriteFile(p, []byte(addon), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// The archive and the manifest are built by walking the payload directory, not
+// from the addon list, so a file left there by a previous run ships and gets a
+// hash line. Rename an addon or drop one and the old PBO goes out with the
+// release while the summary lists only the current set.
+func TestPayloadDirIsClearedBetweenRuns(t *testing.T) {
+	b, cfg, host := realBuilder(t)
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages := b.releaseStages(ch)
+	pbo := stageAddon(t, host, "@t", "Core")
+	packed := []packedAddon{{Name: "Core", Side: modcfg.SideBoth, ModName: "@t", PBO: pbo}}
+
+	if _, err := b.assemblePayloads(ch, stages, packed, only("client")); err != nil {
+		t.Fatal(err)
+	}
+
+	// An addon that existed last time and does not any more.
+	stale := filepath.Join(b.payloadDir(ch, "client"), "@t", "Addons", "Renamed.pbo")
+	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := b.assemblePayloads(ch, stages, packed, only("client")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("a PBO from a previous run survived into the payload and would ship")
+	}
+}
+
+// The stage-level assertion cannot cover the artifact: the archive is built from
+// the payload directory. Ship keys once, turn ship_keys off, and the old .bikey
+// is still sitting there while the run reports that no keys shipped. For a
+// private mod that hands anyone the ability to whitelist a repack.
+func TestPayloadCannotShipAKeyAfterShipKeysIsTurnedOff(t *testing.T) {
+	b, cfg, host := realBuilder(t)
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages := b.releaseStages(ch)
+	pbo := stageAddon(t, host, "@t", "Core")
+	packed := []packedAddon{{Name: "Core", Side: modcfg.SideBoth, ModName: "@t", PBO: pbo}}
+
+	if _, err := b.assemblePayloads(ch, stages, packed, only("client")); err != nil {
+		t.Fatal(err)
+	}
+
+	// What a previous run left behind while it was still distributing the key.
+	keyDir := filepath.Join(b.payloadDir(ch, "client"), "@t", "keys")
+	if err := os.MkdirAll(keyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	leaked := filepath.Join(keyDir, "t.bikey")
+	if err := os.WriteFile(leaked, []byte("key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := b.assemblePayloads(ch, stages, packed, only("client")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(leaked); !os.IsNotExist(err) {
+		t.Error("a .bikey from an earlier run survived into a payload that ships no keys")
+	}
+}
+
+// release_dir is shared between repos. Two of them both declaring a payload
+// called client would assemble into one directory and merge, so the name has to
+// carry something repo-specific.
+func TestPayloadDirsAreNamespacedPerRepo(t *testing.T) {
+	b, cfg, _ := realBuilder(t)
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := b.payloadDir(ch, "client")
+	if !strings.Contains(filepath.Base(dir), cfg.Mod.ID) {
+		t.Errorf("payload dir %q does not carry the mod id, so two repos would collide", dir)
+	}
+	if filepath.Base(dir) == "payload-client" {
+		t.Error("payload dir is not namespaced")
+	}
+}
+
+// release_dir is shared between repos, so a bare RELEASE_MANIFEST.txt means
+// whichever repo released last owns the only copy. The zip name already carries
+// the mod id; the manifest has to as well.
+func TestManifestNameIsNamespacedPerRepo(t *testing.T) {
+	b, cfg, host := realBuilder(t)
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Manifest.Enabled = true
+	ch.Manifest.Algo = "sha256"
+	// Release creates this while staging; writeManifest on its own does not.
+	if err := os.MkdirAll(host.Paths.ReleaseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := b.writeManifest(ch, &ReleaseResult{}, ReleaseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(filepath.Base(got), cfg.Mod.ID) {
+		t.Errorf("manifest %q does not carry the mod id, so two repos would overwrite each other", got)
+	}
+	if filepath.Base(got) == "RELEASE_MANIFEST.txt" {
+		t.Error("manifest name is not namespaced")
+	}
+
+	// An explicit name is left exactly as written.
+	ch.Manifest.Out = "MY_MANIFEST.txt"
+	got, err = b.writeManifest(ch, &ReleaseResult{}, ReleaseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(got) != "MY_MANIFEST.txt" {
+		t.Errorf("explicit manifest.out was rewritten to %q", got)
+	}
+}

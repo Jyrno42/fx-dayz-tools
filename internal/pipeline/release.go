@@ -106,6 +106,49 @@ func (b *Builder) releaseStages(ch *modcfg.Channel) []modStage {
 	return out
 }
 
+// payloadDir is where a payload is assembled before it is archived.
+//
+// Namespaced by the mod id because release_dir is shared between repos: two of
+// them both declaring a payload called "client" would otherwise assemble into
+// one directory and merge. Stage dirs are already namespaced by their @mod
+// name, which is why only payload dirs need this.
+func (b *Builder) payloadDir(ch *modcfg.Channel, name string) string {
+	return filepath.Join(b.releaseDir(ch), b.Mod.Mod.ID+"-payload-"+name)
+}
+
+// resetPayloadDir clears a payload directory before it is filled.
+//
+// The archive and the manifest are both built by walking this directory, not
+// from the addon list, so anything a previous run left behind ships and gets a
+// hash line. Renaming an addon, dropping one, or changing a payload's sides all
+// leave a file here that no longer belongs.
+func (b *Builder) resetPayloadDir(dir string) error {
+	if b.Runner.DryRun() {
+		return nil
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("release: clearing %s: %w", dir, err)
+	}
+	return nil
+}
+
+// assertNoShippedKeys proves a payload carries no public key when the mod does
+// not distribute one.
+//
+// The stage-level check cannot stand in for this. The archive is built from the
+// payload directory, so that is where the guarantee has to hold: a run that
+// shipped keys once leaves a .bikey here, and a later run with ship_keys off
+// clears the stage, reports "no keys shipped", and archives the old key anyway.
+func (b *Builder) assertNoShippedKeys(ch *modcfg.Channel, dir string) error {
+	if b.Runner.DryRun() || b.Mod.DistributeBikey(ch) {
+		return nil
+	}
+	if err := sign.RemoveKeysDir(dir); err != nil {
+		return err
+	}
+	return sign.AssertNoPublicKeys(dir)
+}
+
 // stageDirFor is where an addon set's PBOs are staged.
 func (b *Builder) stageDirFor(ch *modcfg.Channel, set *modcfg.AddonSet) string {
 	if ch.Out != "" {
@@ -443,7 +486,10 @@ func (b *Builder) assemblePayloads(
 		// repos, so archiving it directly would sweep up everything else in there.
 		pl := Payload{Name: "all", Dir: primary.Dir, ModNames: []string{primary.ModName}, zipRoot: primary.ModName}
 		if len(stages) > 1 {
-			root := filepath.Join(b.releaseDir(ch), "payload-all")
+			root := b.payloadDir(ch, "all")
+			if err := b.resetPayloadDir(root); err != nil {
+				return nil, err
+			}
 			pl.Dir, pl.zipRoot = root, ""
 			pl.ModNames = nil
 			for _, st := range stages {
@@ -458,6 +504,9 @@ func (b *Builder) assemblePayloads(
 		}
 		for _, a := range packed {
 			pl.Addons = append(pl.Addons, a.Name)
+		}
+		if err := b.assertNoShippedKeys(ch, pl.Dir); err != nil {
+			return nil, err
 		}
 		if err := b.zipPayload(ch, &pl, opts); err != nil {
 			return nil, err
@@ -478,7 +527,12 @@ func (b *Builder) assemblePayloads(
 		}
 
 		pl := Payload{Name: name}
-		root := filepath.Join(b.releaseDir(ch), "payload-"+name)
+		root := b.payloadDir(ch, name)
+		if !single {
+			if err := b.resetPayloadDir(root); err != nil {
+				return nil, err
+			}
+		}
 
 		// Group by @mod folder, so a payload fed by two sets ships two folders
 		// rather than one merged folder an operator cannot take apart.
@@ -530,6 +584,9 @@ func (b *Builder) assemblePayloads(
 		}
 
 		b.Report.Step("%-28s %d addon(s) in %v", "payload "+name, len(pl.Addons), pl.ModNames)
+		if err := b.assertNoShippedKeys(ch, pl.Dir); err != nil {
+			return nil, err
+		}
 		if err := b.zipPayload(ch, &pl, opts); err != nil {
 			return nil, err
 		}
@@ -578,9 +635,17 @@ func (b *Builder) zipPayload(ch *modcfg.Channel, pl *Payload, opts ReleaseOption
 // writeManifest records a SHA-256 for every shipped file, so a release can be
 // checked after the fact.
 func (b *Builder) writeManifest(ch *modcfg.Channel, res *ReleaseResult, opts ReleaseOptions) (string, error) {
+	// Namespaced by mod id for the same reason the zip is: release_dir is shared
+	// between repos, and a bare RELEASE_MANIFEST.txt means whichever released
+	// last owns the only copy. An explicit manifest.out is honoured as written,
+	// so a repo that sets one is responsible for keeping it distinct.
 	name := ch.Manifest.Out
 	if name == "" {
-		name = "RELEASE_MANIFEST.txt"
+		name = b.Mod.Mod.ID
+		if opts.Version != "" {
+			name += "-" + opts.Version
+		}
+		name += "-RELEASE_MANIFEST.txt"
 	}
 	dst := filepath.Join(b.releaseDir(ch), filepath.FromSlash(name))
 
