@@ -263,10 +263,13 @@ plus configs both ways and booting each:
 - **Server side, measurably identical.** Same class count, same entities spawned,
   same warning counts, same mod-side log output. The obfuscated `config.bin` parses
   and the p3d references resolve.
-- **Client side, renders correctly.** Meshes, textures and geometry all normal.
+- **Client side, mostly renders correctly.** Meshes, textures and geometry are
+  normal. The exception found so far is one group of `rvmat`s that the rescramble
+  breaks, and the fix for that is a `policy.noscramble` entry rather than turning
+  obfuscation off for the whole PBO.
 
 The dll really does scramble the models. The log lists `obfuscating any paas`,
-`any rvmats`, `any p3ds` and `all p3d contents`. It just does not break them here.
+`any rvmats`, `any p3ds` and `all p3d contents`. It mostly does not break them.
 
 So treat it as per-mod, and test rather than assume in either direction. Two traps
 if you do test:
@@ -277,6 +280,10 @@ if you do test:
   `ExtractPbo` refusing the file as the signal instead.
 - **A server boot cannot see it.** A scrambled mesh or material fails at render, not
   at load, and a headless server never renders. Only a client settles it.
+- **Checking one object is not enough.** The broken material got past my first
+  client check because the object I happened to be looking at did not use it.
+  Anything with a material path of its own needs checking on its own (holograms
+  for example).
 
 ### Obfuscation writes its own key into your source tree
 
