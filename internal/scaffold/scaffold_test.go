@@ -299,3 +299,37 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// The .obf pboProject writes beside a packed source is the deobfuscation map:
+// every mangled name paired with the real one. A scaffolded repo has to ignore
+// it, because it appears as an ordinary new file in a directory full of them and
+// committing it undoes what +O was for.
+func TestGitignoreCoversObfuscationLeftovers(t *testing.T) {
+	s, _ := Derive(Spec{Dir: `E:\projects\x`}, "P:", "")
+	files, err := Plan(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body string
+	for _, f := range files {
+		if f.Path == ".gitignore" {
+			body = string(f.Content)
+		}
+	}
+	if body == "" {
+		t.Fatal("no .gitignore in the scaffold plan")
+	}
+
+	for _, pattern := range []string{
+		"*.obf",           // the deobfuscation map
+		"*.biprivatekey",  // signing keys
+		"$PBOPREFIX$.txt", // what the packer actually writes on 4.31
+		"$PBOPREFIX$",     // and the spelling an older repo may still carry
+		"noscramble.lst",
+	} {
+		if !strings.Contains(body, pattern) {
+			t.Errorf(".gitignore does not cover %q:\n%s", pattern, body)
+		}
+	}
+}

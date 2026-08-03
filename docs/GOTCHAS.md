@@ -278,6 +278,30 @@ if you do test:
 - **A server boot cannot see it.** A scrambled mesh or material fails at render, not
   at load, and a headless server never renders. Only a client settles it.
 
+### Obfuscation writes its own key into your source tree
+
+pboProject drops a `.obf` file beside the source it packed. It pairs every mangled
+name with the real one, so it is the deobfuscation map for the release you just
+built. Committing it hands back everything `+O` was meant to protect.
+
+It lands in the source tree rather than the output folder, which is what makes it
+easy to miss: `git status` shows it as an ordinary new file in a directory full of
+ordinary new files, and it survives the pack rather than being cleaned up.
+
+I committed one before noticing. `init` now ignores `*.obf`, but that only helps
+repos scaffolded after the fact, so check an existing repo by hand:
+
+```
+git log --all --oneline --diff-filter=A -- '*.obf'
+```
+
+A hit means a history rewrite, not a `git rm`. The file is still readable in every
+commit that carried it, and on any remote it reached.
+
+Worth keeping rather than deleting outright: the map is also how you turn an
+obfuscated crash log back into real file names. Keep it out of the repo, not off
+the disk.
+
 ### Obfuscated output is never reproducible
 
 Mikero uses a fresh cipher each run, so the same folder obfuscated twice gives

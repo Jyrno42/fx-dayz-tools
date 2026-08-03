@@ -2,10 +2,16 @@
 /buildlog/
 /.build_lockfile.json
 
+# pboProject drops its +O rename map beside the source it packed. It pairs every
+# mangled name with the real one, so it is the deobfuscation key: never commit it.
+*.obf
+
 # pboProject scratch. The tool writes these into a source tree and removes them
-# again, but a hard kill mid-pack can leave one behind. `dayzmod clean
-# --stray-prefix` finds the orphans.
+# again, but a hard kill mid-pack can leave one behind. Both spellings of the
+# prefix file: 4.31 deprecated the extensionless one, and a repo may still carry
+# it from an older build.
 $PBOPREFIX$
+$PBOPREFIX$.txt
 noscramble.lst
 
 # Never commit signing keys.
