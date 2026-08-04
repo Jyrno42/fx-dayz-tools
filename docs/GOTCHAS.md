@@ -246,6 +246,33 @@ that is assumed to be a mistake rather than content.
 *Guarded.* `Preflight` refuses, naming the directory, rather than letting it become
 a failed pack whose only explanation is a line in an unopened log.
 
+### `noscramble` paths are relative to the addon root, and a bare name rarely works
+
+A bare file name in `policy.noscramble` only matches a file sitting directly in the
+addon's own root. Name one that lives in a subfolder and the entry matches nothing,
+so the file is scrambled anyway and the build says nothing about it.
+
+Write the path from the addon root instead. All three of these work:
+
+```yaml
+noscramble:
+  - 'data\holo.rvmat'                                   # from the addon root
+  - '\data\holo.rvmat'                                  # leading slash is fine
+  - 'projects\my-mod\mod\MyAddon\data\holo.rvmat'       # full PBO prefix also fine
+```
+
+Single-quote them in YAML so the backslashes survive.
+
+What needs protecting is anything named by a path that `+O` does not rewrite.
+`hologramMaterialPath` in a `config.cpp` is one: obfuscation renames the rvmat and
+updates the references it knows about, but a material path reached that way is left
+pointing at a name that no longer exists.
+
+Moving the files into a folder called `noscramble` works too, and is Mikero's other
+documented mechanism. It costs more than it looks: the folder name becomes part of
+the path inside the PBO, so every reference to those files has to be rewritten. The
+list leaves paths alone.
+
 ### Obfuscation forces compression, and `init*.*` will not compress
 
 Mikero's DLL refuses to compress `init*.*`. Anything reached from an init path
@@ -266,7 +293,7 @@ plus configs both ways and booting each:
 - **Client side, mostly renders correctly.** Meshes, textures and geometry are
   normal. The exception found so far is one group of `rvmat`s that the rescramble
   breaks, and the fix for that is a `policy.noscramble` entry rather than turning
-  obfuscation off for the whole PBO.
+  obfuscation off for the whole PBO. Mind the path form; see below.
 
 The dll really does scramble the models. The log lists `obfuscating any paas`,
 `any rvmats`, `any p3ds` and `all p3d contents`. It mostly does not break them.
@@ -280,10 +307,9 @@ if you do test:
   `ExtractPbo` refusing the file as the signal instead.
 - **A server boot cannot see it.** A scrambled mesh or material fails at render, not
   at load, and a headless server never renders. Only a client settles it.
-- **Checking one object is not enough.** The broken material got past my first
-  client check because the object I happened to be looking at did not use it.
-  Anything with a material path of its own needs checking on its own (holograms
-  for example).
+- **Checking one object is not enough.** A broken material goes unnoticed when the
+  object you look at does not use it. Anything with a material path of its own
+  needs checking on its own (holograms for example).
 
 ### Obfuscation writes its own key into your source tree
 
