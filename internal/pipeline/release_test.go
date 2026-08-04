@@ -444,3 +444,52 @@ func TestManifestNameIsNamespacedPerRepo(t *testing.T) {
 		t.Errorf("explicit manifest.out was rewritten to %q", got)
 	}
 }
+
+// A loose entry ships beside the @mod folders, not inside one. The archive
+// extracts into the install root, so addons\ has to be a sibling of @mod or the
+// operator ends up with @mod\addons\ and a PBO the engine never sees.
+func TestLoosePayloadShipsBesideTheModFolders(t *testing.T) {
+	b, cfg, host := realBuilder(t)
+	ch, err := cfg.Channel("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Payloads = map[string]*modcfg.Payload{
+		"server": {Name: "server", Sides: []modcfg.Side{modcfg.SideBoth, modcfg.SideServer}},
+	}
+
+	stages := b.releaseStages(ch)
+	corePbo := stageAddon(t, host, "@t", "Core")
+	loose := filepath.Join(t.TempDir(), "Loose.pbo")
+	if err := os.WriteFile(loose, []byte("loose"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	packed := []packedAddon{
+		{Name: "Core", Side: modcfg.SideBoth, ModName: "@t", PBO: corePbo},
+		{Name: "Loose", Side: modcfg.SideServer, Into: "addons", PBO: loose, Included: true},
+	}
+
+	payloads, err := b.assemblePayloads(ch, stages, packed, ReleaseOptions{NoZip: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl := payloads[0]
+
+	// Not a mod folder, so it must not be reported as one an operator has to
+	// keep separate.
+	for _, mn := range pl.ModNames {
+		if mn == "" || mn == "addons" {
+			t.Errorf("a loose destination was reported as a mod folder: %v", pl.ModNames)
+		}
+	}
+	// Root layout, so both land side by side in the archive.
+	if pl.zipRoot != "" {
+		t.Errorf("zipRoot = %q, want empty so the loose dir is a sibling of @t", pl.zipRoot)
+	}
+	if _, err := os.Stat(filepath.Join(pl.Dir, "addons", "Loose.pbo")); err != nil {
+		t.Errorf("the loose PBO is not at the payload root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(pl.Dir, "@t", "Addons", "Core.pbo")); err != nil {
+		t.Errorf("the mod folder is missing from the payload: %v", err)
+	}
+}

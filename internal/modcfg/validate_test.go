@@ -470,3 +470,82 @@ launch:
 		t.Errorf("per-addon prefix = %q, want the exact upstream value", got)
 	}
 }
+
+// into: is the destination for a PBO installed loose in a game's own addons
+// directory. Its rules are the mirror of mod_name's, and the side rule exists
+// because the engine loads a loose PBO with no mod list able to exclude it.
+func TestIncludeIntoRules(t *testing.T) {
+	manifest := func(entry string) string {
+		return `
+version: 1
+mod: { id: t, name: "@t", visibility: private }
+repo: { pdrive_path: 'P:\projects\t' }
+include:
+` + entry + `
+addon_sets:
+  main:
+    source: mod
+    mod_name: "@t"
+    addons: { Logic: { policy: { side: both } } }
+channels:
+  dev: { packer: addonbuilder, deploy: [server], sign: false }
+launch:
+  mods:
+    - { name: "@t", source: self }
+`
+	}
+
+	cases := []struct{ name, entry, want string }{
+		{
+			"a drive path",
+			"  - { from: vendor/x.pbo, into: 'C:/addons', side: server }",
+			"relative",
+		},
+		{
+			"leading slash",
+			"  - { from: vendor/x.pbo, into: '/addons', side: server }",
+			"leading slash",
+		},
+		{
+			"climbing out",
+			"  - { from: vendor/x.pbo, into: '../addons', side: server }",
+			"..",
+		},
+		{
+			"an @mod folder belongs in mod_name",
+			"  - { from: vendor/x.pbo, into: '@mod', side: server }",
+			"mod_name",
+		},
+		{
+			"both destinations at once",
+			"  - { from: vendor/x.pbo, into: addons, mod_name: '@t', side: server }",
+			"not both",
+		},
+		{
+			"no side stated",
+			"  - { from: vendor/x.pbo, into: addons }",
+			"side",
+		},
+		{
+			"keys have nowhere to go",
+			"  - { from: vendor/x.pbo, into: addons, side: server, keys: vendor/keys }",
+			"key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(manifest(tc.entry)))
+			if err == nil {
+				t.Fatalf("expected an error mentioning %q", tc.want)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.want)) {
+				t.Errorf("error should mention %q, got:\n%v", tc.want, err)
+			}
+		})
+	}
+
+	// The shape the server pack actually uses.
+	if _, err := Parse([]byte(manifest("  - { from: vendor/x.pbo, into: addons, side: server }"))); err != nil {
+		t.Errorf("a relative into with a stated side should be valid: %v", err)
+	}
+}

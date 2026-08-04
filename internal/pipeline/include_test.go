@@ -398,3 +398,175 @@ func TestDeployIncludesSkipsUnchangedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// devInstalls wires a builder to throwaway client and server installs.
+func devInstalls(t *testing.T, root string, includes []modcfg.IncludeSpec) (*Builder, *modcfg.Channel, string, string) {
+	t.Helper()
+	cfg, host := testRepo(t)
+	cfg.Root = root
+	cfg.Include = includes
+	client, server := t.TempDir(), t.TempDir()
+	host.Paths.DayZClient = client
+	host.Paths.DayZServer = server
+	// Keep the ledger out of the real user config directory.
+	host.Path = filepath.Join(t.TempDir(), "config.yml")
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.Deploy = []modcfg.Target{modcfg.TargetClient, modcfg.TargetServer}
+	return b, ch, client, server
+}
+
+// The one with teeth. A loose PBO in a client's addons\ is loaded by the engine
+// with no mod list able to exclude it, so side: server has to mean zero writes
+// under the client install. An @mod folder tolerates a stray copy because
+// launch.mods decides what loads; this does not.
+func TestIntoWithServerSideNeverTouchesTheClient(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	b, ch, client, server := devInstalls(t, root, []modcfg.IncludeSpec{
+		{From: "prebuilt/Signed.pbo", Into: "addons", Side: modcfg.SideServer},
+	})
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(server, "addons", "Signed.pbo")); err != nil {
+		t.Errorf("the server install did not get it: %v", err)
+	}
+	// Nothing at all under the client, not just nothing in addons\.
+	var found []string
+	_ = filepath.WalkDir(client, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if len(found) != 0 {
+		t.Errorf("side: server wrote %d file(s) into the client install: %v", len(found), found)
+	}
+}
+
+// A single .pbo as `from` takes one file out of a folder holding several, which
+// is what opt-in plugin sets need: taking the directory would ship the rest.
+func TestIncludeFromASinglePbo(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	b, ch, _, server := devInstalls(t, root, []modcfg.IncludeSpec{
+		{From: "prebuilt/Signed.pbo", Into: "addons", Side: modcfg.SideServer},
+	})
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(server, "addons", "Signed.pbo")); err != nil {
+		t.Errorf("the named PBO was not deployed: %v", err)
+	}
+	// Its signature rides along, and the sibling PBO does not.
+	if _, err := os.Stat(filepath.Join(server, "addons", "Signed.pbo.Vendor.bisign")); err != nil {
+		t.Errorf("the signature was left behind: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(server, "addons", "Unsigned.pbo")); !os.IsNotExist(err) {
+		t.Error("naming one file still shipped the whole directory")
+	}
+}
+
+// The install's addons directory holds hundreds of vanilla PBOs. Overwriting one
+// of those, or anything an operator put there by hand, is not something a build
+// should do quietly.
+func TestIntoRefusesToClobberAFileItDidNotPlace(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	b, ch, _, server := devInstalls(t, root, []modcfg.IncludeSpec{
+		{From: "prebuilt/Signed.pbo", Into: "addons", Side: modcfg.SideServer},
+	})
+	if err := os.MkdirAll(filepath.Join(server, "addons"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	squatter := filepath.Join(server, "addons", "Signed.pbo")
+	if err := os.WriteFile(squatter, []byte("someone else's file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := b.deployIncludes(ch, Options{})
+	if err == nil {
+		t.Fatal("expected a refusal to overwrite an unrecorded file")
+	}
+	if got, _ := os.ReadFile(squatter); string(got) != "someone else's file" {
+		t.Error("the existing file was overwritten anyway")
+	}
+}
+
+// The ledger is what makes into: reversible. Build one repo, then another, and
+// the second clears what the first left in the shared install.
+func TestLedgerRemovesWhatAnotherRepoLeftBehind(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	first, ch, _, server := devInstalls(t, root, []modcfg.IncludeSpec{
+		{From: "prebuilt/Signed.pbo", Into: "addons", Side: modcfg.SideServer},
+	})
+	if err := first.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	left := filepath.Join(server, "addons", "Signed.pbo")
+	if _, err := os.Stat(left); err != nil {
+		t.Fatalf("setup: the first repo did not place its file: %v", err)
+	}
+
+	// A second repo with its own source tree, sharing the install and the ledger.
+	otherRoot := filepath.Join(t.TempDir(), "other-repo")
+	if err := os.MkdirAll(filepath.Join(otherRoot, "prebuilt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(otherRoot, "prebuilt", "Unsigned.pbo"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, ch2, _, _ := devInstalls(t, otherRoot, []modcfg.IncludeSpec{
+		{From: "prebuilt/Unsigned.pbo", Into: "addons", Side: modcfg.SideServer},
+	})
+	second.Host.Paths.DayZServer = server
+	second.Host.Path = first.Host.Path
+	if err := second.deployIncludes(ch2, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(left); !os.IsNotExist(err) {
+		t.Error("the other repo's loose PBO survived and would still be auto-loaded")
+	}
+	if _, err := os.Stat(filepath.Join(server, "addons", "Unsigned.pbo")); err != nil {
+		t.Errorf("the second repo's file is missing: %v", err)
+	}
+}
+
+// A file edited since the build placed it is left alone. Deleting someone's
+// hand-edited copy without saying so is worse than leaving clutter behind.
+func TestLedgerLeavesAChangedFileAlone(t *testing.T) {
+	dir, _ := vendorDir(t)
+	root := filepath.Dir(dir)
+
+	b, ch, _, server := devInstalls(t, root, []modcfg.IncludeSpec{
+		{From: "prebuilt/Signed.pbo", Into: "addons", Side: modcfg.SideServer},
+	})
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	placed := filepath.Join(server, "addons", "Signed.pbo")
+	if err := os.WriteFile(placed, []byte("edited by hand"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The include is gone, so reconciliation would otherwise remove the file.
+	b.Mod.Include = nil
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(placed); string(got) != "edited by hand" {
+		t.Error("a file changed since it was placed should not be deleted")
+	}
+}

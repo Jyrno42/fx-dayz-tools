@@ -258,7 +258,11 @@ type packedAddon struct {
 	Side modcfg.Side
 	PBO  string
 	// ModName is the @mod folder this addon belongs to, taken from its set.
+	// Empty when Into is set, since a loose PBO belongs to no mod folder.
 	ModName string
+	// Into is a destination relative to the payload root, for a prebuilt PBO
+	// that is installed loose rather than inside an @mod folder.
+	Into string
 	// Included marks a prebuilt PBO copied in instead of packed here. Those keep
 	// their own signatures and never get re-signed.
 	Included bool
@@ -517,7 +521,18 @@ func (b *Builder) assemblePayloads(
 	// One payload that takes everything out of a single staged folder needs no
 	// copy, so use the stage as-is. With several folders in play there is no one
 	// directory that already holds the answer.
-	single := len(stages) == 1 && len(names) == 1 && payloadTakesAll(ch.Payloads[names[0]], packed)
+	// A loose entry lands beside the @mod folders rather than inside one, so the
+	// payload has to be a directory holding both. That rules out the no-copy path,
+	// which hands back a single @mod folder.
+	anyLoose := false
+	for _, a := range packed {
+		if a.Into != "" {
+			anyLoose = true
+			break
+		}
+	}
+	single := !anyLoose && len(stages) == 1 && len(names) == 1 &&
+		payloadTakesAll(ch.Payloads[names[0]], packed)
 
 	var out []Payload
 	for _, name := range names {
@@ -536,18 +551,29 @@ func (b *Builder) assemblePayloads(
 
 		// Group by @mod folder, so a payload fed by two sets ships two folders
 		// rather than one merged folder an operator cannot take apart.
+		loose := false
 		for _, a := range packed {
 			if !sideIn(a.Side, spec.Sides) {
 				continue
 			}
 			pl.Addons = append(pl.Addons, a.Name)
-			if !containsString(pl.ModNames, a.ModName) {
+			if a.Into == "" && !containsString(pl.ModNames, a.ModName) {
+				// Loose entries are deliberately absent from ModNames. They are not
+				// mod folders, so reporting one as a folder an operator must keep
+				// separate would be wrong.
 				pl.ModNames = append(pl.ModNames, a.ModName)
+			}
+			if a.Into != "" {
+				loose = true
 			}
 			if single || b.Runner.DryRun() {
 				continue
 			}
-			if err := copyAddonInto(a.PBO, filepath.Join(root, a.ModName, "Addons")); err != nil {
+			dst := filepath.Join(root, a.ModName, "Addons")
+			if a.Into != "" {
+				dst = filepath.Join(root, filepath.FromSlash(a.Into))
+			}
+			if err := copyAddonInto(a.PBO, dst); err != nil {
 				return nil, fmt.Errorf("release: %w", err)
 			}
 		}
@@ -559,6 +585,11 @@ func (b *Builder) assemblePayloads(
 		switch {
 		case single:
 			pl.Dir, pl.zipRoot = primary.Dir, primary.ModName
+		case loose:
+			// The archive extracts into the install root, so a loose destination
+			// like addons\ has to sit beside the @mod folders rather than inside
+			// one of them.
+			pl.Dir, pl.zipRoot = root, ""
 		case len(pl.ModNames) == 1:
 			// Exactly one folder, so the payload directory can be that folder and
 			// the archive keeps the shape it has always had.

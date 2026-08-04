@@ -46,15 +46,22 @@ func (b *Builder) stageIncludes(
 			return nil, fmt.Errorf("include: an entry has no `from` directory")
 		}
 
-		modName := inc.ModName
-		if modName == "" {
-			modName = primary.ModName
+		// A loose PBO has no mod folder to stage into. Payload assembly copies it
+		// straight from the repo, so there is nothing to prepare here beyond
+		// naming it.
+		var dir, addonsDir, modName string
+		if inc.Into == "" {
+			modName = inc.ModName
+			if modName == "" {
+				modName = primary.ModName
+			}
+			var ok bool
+			dir, ok = stageDir[modName]
+			if !ok {
+				return nil, fmt.Errorf("include: %s names mod_name %q, which is not a staged mod folder", inc.From, modName)
+			}
+			addonsDir = filepath.Join(dir, "Addons")
 		}
-		dir, ok := stageDir[modName]
-		if !ok {
-			return nil, fmt.Errorf("include: %s names mod_name %q, which is not a staged mod folder", inc.From, modName)
-		}
-		addonsDir := filepath.Join(dir, "Addons")
 
 		src := filepath.Join(b.Mod.Root, filepath.FromSlash(inc.From))
 
@@ -83,6 +90,30 @@ func (b *Builder) stageIncludes(
 		for _, pbo := range pbos {
 			name := filepath.Base(pbo)
 			addonName := strings.TrimSuffix(name, filepath.Ext(name))
+
+			if inc.Into != "" {
+				sigs, err := filepath.Glob(pbo + ".*.bisign")
+				if err != nil {
+					return nil, fmt.Errorf("include: %w", err)
+				}
+				if len(sigs) > 0 {
+					// The server's own addons\ directory is not the place for a
+					// signed mod PBO, and shipping the signature implies it is.
+					b.Report.Detail("%s is signed; a loose PBO in %s is not loaded through a mod list", name, inc.Into)
+					signed++
+				} else {
+					unsigned++
+				}
+				staged = append(staged, packedAddon{
+					Name:     addonName,
+					Side:     side,
+					PBO:      pbo,
+					Into:     inc.Into,
+					Included: true,
+				})
+				continue
+			}
+
 			if other, clash := packedInto[strings.ToLower(modName+"/"+addonName)]; clash {
 				return nil, fmt.Errorf(
 					"include: %s would copy %s into %s, where this repo already packed %s; one would overwrite the other",
@@ -132,9 +163,12 @@ func (b *Builder) stageIncludes(
 		b.Report.Step("%-28s %s", "include "+inc.From, detail)
 
 		// The key goes in the folder the operator actually installs, which for a
-		// server-only include is its own folder rather than the primary one.
-		if err := b.stageIncludeKeys(inc, dir, shipKeys); err != nil {
-			return nil, err
+		// server-only include is its own folder rather than the primary one. A
+		// loose PBO has no such folder, and validation rejects keys with into.
+		if inc.Into == "" {
+			if err := b.stageIncludeKeys(inc, dir, shipKeys); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return staged, nil
@@ -178,8 +212,17 @@ func (b *Builder) stageIncludeKeys(inc modcfg.IncludeSpec, stage string, shipKey
 	return nil
 }
 
-// pbosIn lists the PBOs in a directory, sorted.
+// pbosIn lists the PBOs at a path, sorted. The path may be a directory or a
+// single .pbo, so an entry can take one file out of a folder of them without
+// shipping the rest.
 func pbosIn(dir string) ([]string, error) {
+	if info, err := os.Stat(dir); err == nil && !info.IsDir() {
+		if !strings.EqualFold(filepath.Ext(dir), ".pbo") {
+			return nil, fmt.Errorf("include: %s is a file but not a .pbo", dir)
+		}
+		return []string{dir}, nil
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("include: reading %s: %w", dir, err)

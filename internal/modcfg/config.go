@@ -154,8 +154,12 @@ type Policy struct {
 // throw away the original chain of trust, and the operator can whitelist
 // whichever key they already trust.
 type IncludeSpec struct {
-	// From is a directory of .pbo files, relative to the repo root. Any .bisign
-	// beside a PBO is copied with it.
+	// From is a directory of .pbo files, or a single .pbo, relative to the repo
+	// root. Any .bisign beside a PBO is copied with it.
+	//
+	// Naming one file matters when upstream ships several in a folder and only
+	// one of them is wanted. Taking the directory would ship the rest, which for
+	// opt-in plugins can mean shipping two that conflict.
 	From string `yaml:"from"`
 	// Keys is an optional directory of .bikey files belonging to these PBOs.
 	// They ship only when the channel ships keys at all.
@@ -173,6 +177,18 @@ type IncludeSpec struct {
 	// not mod.name, so baking a default in here would route includes to a folder
 	// that out: never creates. It resolves against the primary stage instead.
 	ModName string `yaml:"mod_name"`
+	// Into is a destination that is not an @mod folder: a path relative to the
+	// game install root in dev, and to the payload root in a release. It exists
+	// for the server's own addons\ directory, where the engine loads a loose PBO
+	// with nothing naming it, so mod_name cannot describe it.
+	//
+	// Mutually exclusive with ModName, and validated the other way round: mod_name
+	// must start with @, into must be relative with no leading slash and no ..
+	//
+	// A loose PBO is auto-loaded with no mod list to exclude it, so side is
+	// required on these entries rather than defaulted. Getting it wrong puts a
+	// server-only PBO on every client.
+	Into string `yaml:"into"`
 	// Channels restricts this entry to the named channels. Empty means all,
 	// which includes the dev loop: a pack's vendored dependency has to be in the
 	// game installs for `dev` to boot at all, not just in a release payload.

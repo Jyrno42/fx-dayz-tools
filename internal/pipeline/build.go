@@ -400,6 +400,14 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 		primary = sets[0].ModName
 	}
 
+	ledger, err := b.loadPlacements()
+	if err != nil {
+		return err
+	}
+	// Destinations this run wants, per install root, so anything else recorded
+	// under those roots can be cleared afterwards.
+	wanted := map[string][]string{}
+
 	for _, inc := range includes {
 		src := filepath.Join(b.Mod.Root, filepath.FromSlash(inc.From))
 		if _, err := os.Stat(src); err != nil {
@@ -422,12 +430,20 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 		}
 
 		modName := inc.ModName
-		if modName == "" {
+		if modName == "" && inc.Into == "" {
 			modName = primary
 		}
 
 		copied := 0
 		for _, target := range ch.Deploy {
+			// side is honoured here, not just at payload assembly. It is
+			// cosmetic for an @mod folder, since launch.mods decides what
+			// loads. It is not cosmetic for into: a loose PBO in a client's
+			// addons\ is loaded by the engine with nothing able to exclude it.
+			if !deployTo(inc.Side, target) {
+				continue
+			}
+
 			root := b.Host.Paths.DayZClient
 			if target == modcfg.TargetServer {
 				root = b.Host.Paths.DayZServer
@@ -435,7 +451,11 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 			if root == "" {
 				return fmt.Errorf("cannot deploy %s to %s: the install path is not configured", inc.From, target)
 			}
+
 			dest := filepath.Join(root, modName, "Addons")
+			if inc.Into != "" {
+				dest = filepath.Join(root, filepath.FromSlash(inc.Into))
+			}
 
 			for _, pbo := range pbos {
 				files := []string{pbo}
@@ -452,9 +472,25 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 						copied++
 						continue
 					}
-					// Prebuilt PBOs are large and rarely change, so an unchanged
-					// one is left alone rather than recopied on every build.
-					if !opts.Force && sameFile(f, dst) {
+					if inc.Into == "" {
+						// The tool owns @mod folders, so it may overwrite freely.
+						if !opts.Force && sameFile(f, dst) {
+							continue
+						}
+					} else {
+						rel, relErr := filepath.Rel(root, dst)
+						if relErr != nil {
+							return fmt.Errorf("include: %w", relErr)
+						}
+						wanted[root] = append(wanted[root], rel)
+						placed, err := b.placeLoose(ledger, root, rel, f, dst, inc, opts)
+						if err != nil {
+							return err
+						}
+						if !placed {
+							continue
+						}
+						copied++
 						continue
 					}
 					if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -468,13 +504,137 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 			}
 		}
 
+		where := modName
+		if inc.Into != "" {
+			where = inc.Into
+		}
 		if copied > 0 {
-			b.Report.Step("%-28s %d file(s) -> %s", "include "+inc.From, copied, modName)
+			b.Report.Step("%-28s %d file(s) -> %s", "include "+inc.From, copied, where)
 		} else {
-			b.Report.Detail("include %s already current in %s", inc.From, modName)
+			b.Report.Detail("include %s already current in %s", inc.From, where)
 		}
 	}
-	return nil
+
+	return b.reconcilePlacements(ledger, ch, wanted)
+}
+
+// loadPlacements opens the ledger of files written outside the tool's own
+// output folders. A dry run gets an in-memory one it never saves.
+func (b *Builder) loadPlacements() (*machine.Placements, error) {
+	path, err := machine.PlacementsPath(b.Host.Path)
+	if err != nil {
+		return nil, err
+	}
+	return machine.LoadPlacements(path)
+}
+
+// placeLoose copies one file into a directory the tool does not own, and records
+// it. It reports whether anything was written.
+//
+// The rules exist because the destination is a game install's own addons folder,
+// holding hundreds of vanilla PBOs. Overwriting one of those, or a file an
+// operator installed by hand, is not something a build should ever do quietly.
+func (b *Builder) placeLoose(
+	ledger *machine.Placements,
+	root, rel, src, dst string,
+	inc modcfg.IncludeSpec,
+	opts Options,
+) (bool, error) {
+	sum, present, err := machine.FileSum(src)
+	if err != nil {
+		return false, fmt.Errorf("include: %s: %w", filepath.Base(src), err)
+	}
+	if !present {
+		return false, fmt.Errorf("include: %s vanished before it could be copied", src)
+	}
+
+	onDisk, exists, err := machine.FileSum(dst)
+	if err != nil {
+		return false, fmt.Errorf("include: %s: %w", dst, err)
+	}
+	recorded, known := ledger.Placed(root, rel)
+
+	switch {
+	case exists && !known:
+		return false, fmt.Errorf(
+			"include: %s already exists at %s and this tool did not put it there; "+
+				"move it aside if it should be replaced", filepath.Base(dst), dst)
+	case exists && onDisk != recorded.SHA256 && onDisk != sum:
+		return false, fmt.Errorf(
+			"include: %s at %s has been changed since the build placed it; "+
+				"delete it if the vendored copy should win", filepath.Base(dst), dst)
+	case exists && onDisk == sum && !opts.Force:
+		// Already the file we want.
+		ledger.Record(root, rel, b.Mod.Root, inc.From, sum)
+		return false, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return false, fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		return false, fmt.Errorf("include: %s: %w", filepath.Base(src), err)
+	}
+	ledger.Record(root, rel, b.Mod.Root, inc.From, sum)
+	return true, nil
+}
+
+// reconcilePlacements removes files this build no longer wants from the installs
+// it writes to, then saves the ledger.
+//
+// This is what lets a build in one repo clean up after a build in another. The
+// installs are shared, so a loose PBO left behind by a different pack is loaded
+// by the engine just as readily as the current one.
+func (b *Builder) reconcilePlacements(ledger *machine.Placements, ch *modcfg.Channel, wanted map[string][]string) error {
+	if b.Runner.DryRun() {
+		return nil
+	}
+
+	for _, target := range ch.Deploy {
+		root := b.Host.Paths.DayZClient
+		if target == modcfg.TargetServer {
+			root = b.Host.Paths.DayZServer
+		}
+		if root == "" {
+			continue
+		}
+		for _, rel := range ledger.Stale(root, wanted[root]) {
+			dst := filepath.Join(root, filepath.FromSlash(rel))
+			recorded, _ := ledger.Placed(root, rel)
+
+			onDisk, exists, err := machine.FileSum(dst)
+			if err != nil {
+				return fmt.Errorf("include: %s: %w", dst, err)
+			}
+			switch {
+			case !exists:
+				// Already gone, so there is nothing to report.
+				ledger.Forget(root, rel)
+			case onDisk != recorded.SHA256:
+				b.Report.Detail("left %s alone: it has changed since the build placed it", rel)
+			default:
+				if err := os.Remove(dst); err != nil {
+					return fmt.Errorf("include: removing %s: %w", dst, err)
+				}
+				b.Report.Step("%-28s %s", "removed stale", rel)
+				ledger.Forget(root, rel)
+			}
+		}
+	}
+	return ledger.Save()
+}
+
+// deployTo reports whether an include belongs in a given install.
+func deployTo(side modcfg.Side, target modcfg.Target) bool {
+	switch side {
+	case "", modcfg.SideBoth:
+		return true
+	case modcfg.SideServer:
+		return target == modcfg.TargetServer
+	case modcfg.SideClient:
+		return target == modcfg.TargetClient
+	}
+	return true
 }
 
 // sameFile reports whether dst already holds src, by size and modification

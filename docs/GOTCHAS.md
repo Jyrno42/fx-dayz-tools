@@ -10,22 +10,33 @@ down so I do not have to rediscover them.
 
 ## Engine and loading
 
-### The server's own `Addons\` folder is a legacy route, and not one to use
+### The server's own `Addons\` folder is a legacy route, and rarely the one to use
 
-Two independent reasons:
+For a mod of your own, use **`-serverMod=`**. It loads the mod normally while
+keeping it off clients entirely, so they neither list nor download it. In
+`dayz.yml` that is `launch.mods[].side: server`.
 
-- **Scripts never compile.** I tested this on 1.29 with a probe addon and no `-mod=`
-  at all. The engine adds the package and merges its config, and the mod name even
-  appears in the defines list of every script module, but no script module is
-  created for it and the probe never ran. Data-only addons work; anything with
-  scripts silently does nothing.
-- **It must be unsigned.** A signed PBO loaded this way will not load at all. That
-  is the legacy "hidden servermod" mechanism, and it rules out signing, which in
-  turn rules out the one case worth signing a server mod for.
+What I measured against that route, on 1.29 with a probe addon and no `-mod=` at
+all: the engine adds the package and merges its config, and the mod name appears in
+the defines list of every script module, but no script module is created for it and
+the probe never ran.
 
-The mechanism to use is **`-serverMod=`**. It loads the mod normally while keeping
-it off clients entirely, so they neither list nor download it. In `dayz.yml` that is
-`launch.mods[].side: server`.
+**That result is narrower than it first looks.** Commercial mods ship a private
+half specifically for this folder, and they work. The probe was a lone PBO with
+nothing else loaded, so the fair reading is that a loose PBO does not get a script
+module *of its own*: code in it runs when a mod loaded normally declares the module
+that reaches it. I have not pinned the exact mechanism down, so treat a loose PBO
+that is meant to stand alone as unproven, and one that ships alongside its own
+`@mod` as normal practice.
+
+Signing is the other half. A PBO here is not reached through a mod list and is not
+verified against a whitelisted key, so shipping a `.bisign` with one implies a check
+that does not happen.
+
+*Guarded.* `include[].into` is the destination for a prebuilt PBO installed this
+way. It requires an explicit `side`, because a loose PBO in a client's install is
+auto-loaded with no mod list able to exclude it, and it refuses `keys:`, since there
+is no mod folder to ship one in.
 
 ### `verifySignatures` does not apply to `-serverMod=`
 

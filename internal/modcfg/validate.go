@@ -404,6 +404,52 @@ func (c *Config) validateIncludes(add addFunc) {
 		if inc.ModName != "" && !strings.HasPrefix(inc.ModName, "@") {
 			add("include[%d].mod_name %q must start with @ -- DayZ resolves mod folders by that prefix", i, inc.ModName)
 		}
+
+		if inc.Into != "" {
+			if inc.ModName != "" {
+				add("include[%d] sets both mod_name and into; a destination is either an @mod folder or a plain path, not both", i)
+			}
+			c.validateIncludeInto(i, inc, add)
+		}
+	}
+}
+
+// validateIncludeInto checks a destination that is not a mod folder.
+//
+// Every rule here exists because the path is joined onto a game install root or
+// a payload root. An absolute path, a drive letter or a .. segment would write
+// outside the directory the tool is allowed to touch.
+func (c *Config) validateIncludeInto(i int, inc IncludeSpec, add addFunc) {
+	slashed := paths.ToSlash(inc.Into)
+
+	switch {
+	case path.IsAbs(slashed), strings.HasPrefix(slashed, "/"):
+		add("include[%d].into %q must be relative to the install root, with no leading slash", i, inc.Into)
+	case len(inc.Into) > 1 && inc.Into[1] == ':':
+		add("include[%d].into %q must be relative, not a drive path", i, inc.Into)
+	}
+	for _, seg := range strings.Split(slashed, "/") {
+		if seg == ".." {
+			add("include[%d].into %q must not climb out with ..", i, inc.Into)
+			break
+		}
+	}
+	if strings.HasPrefix(slashed, "@") {
+		add("include[%d].into %q names an @mod folder; use mod_name for that", i, inc.Into)
+	}
+
+	// Stated rather than defaulted. A loose PBO in a client's addons\ is loaded
+	// by the engine with no mod list to keep it out, so "which side" is not a
+	// question this should answer on the author's behalf.
+	if inc.Side == "" {
+		add("include[%d] sets into: %q but no side; a loose PBO is auto-loaded by whichever install it lands in, so say which one", i, inc.Into)
+	}
+
+	// A key ships in an @mod folder's keys\ directory, and a loose PBO has no
+	// folder to put one in. A PBO installed this way is not verified against a
+	// key anyway, so the entry would be inert rather than merely misplaced.
+	if inc.Keys != "" {
+		add("include[%d] sets both into: and keys:; a loose PBO has no mod folder to ship a key in", i)
 	}
 }
 
