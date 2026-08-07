@@ -659,7 +659,13 @@ func (b *Builder) packerFor(ch *modcfg.Channel) (packer.Packer, error) {
 		if exe == "" {
 			return nil, fmt.Errorf("AddonBuilder is not configured; run `dayzmod config init`")
 		}
-		return &packer.AddonBuilder{Exe: exe}, nil
+		// Per repo, so two repos that both have an addon called Core do not share
+		// one binarise cache. Under the system temp dir because that is what it
+		// is: derived output that can be thrown away at any time.
+		return &packer.AddonBuilder{
+			Exe:     exe,
+			TempDir: filepath.Join(os.TempDir(), "dayzmod", b.Mod.Mod.ID),
+		}, nil
 	case modcfg.PackerPboProject:
 		exe := b.Host.PboProject()
 		if exe == "" {

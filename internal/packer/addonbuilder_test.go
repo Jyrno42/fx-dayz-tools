@@ -95,10 +95,27 @@ func TestAddonBuilderArgvMatchesTheOldPipeline(t *testing.T) {
 	ab := &AddonBuilder{Exe: abExe}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ab.Argv(tc.job)
+			all, err := ab.Argv(tc.job)
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			// -temp is a deliberate departure from the old pipeline, which left it
+			// out and so inherited whatever folder AddonBuilder used last. Dropped
+			// here so the rest still compares flag for flag, and asserted below.
+			var got []string
+			temps := 0
+			for _, a := range all {
+				if strings.HasPrefix(a, "-temp=") {
+					temps++
+					continue
+				}
+				got = append(got, a)
+			}
+			if temps != 1 {
+				t.Errorf("expected exactly one -temp, got %d: %q", temps, all)
+			}
+
 			if len(got) != len(tc.want) {
 				t.Fatalf("argv length %d, want %d\n  got  %q\n  want %q", len(got), len(tc.want), got, tc.want)
 			}
@@ -223,5 +240,42 @@ func TestAddonBuilderCaps(t *testing.T) {
 	}
 	if c.SelfCleansTemp {
 		t.Error("AddonBuilder does not clean its sync cache; the caller must")
+	}
+}
+
+// The cache location has to be stated, never inherited. AddonBuilder's own
+// documentation says an absent -temp reuses "the last folder", so leaving it out
+// puts the cache wherever a previous run happened to leave it. Preflight then
+// clears a directory nothing writes to, and files deleted from the source tree
+// keep shipping.
+func TestAddonBuilderStatesItsTempDir(t *testing.T) {
+	ab := &AddonBuilder{Exe: abExe, TempDir: `C:\tmp\dayzmod\mymod`}
+	j := Job{
+		AddonName: "Core",
+		SourceDir: `P:\projects\x\mod\Core`,
+		OutDir:    `P:\out\Core`,
+		Prefix:    `projects\x\mod\Core`,
+		Binarize:  true,
+	}
+
+	argv, err := ab.Argv(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Whatever Preflight wipes must be the directory AddonBuilder was told to
+	// use, or the wipe clears the wrong place.
+	want := "-temp=" + ab.SyncDir(j)
+	found := false
+	for _, a := range argv {
+		if a == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("argv does not state the temp dir as %q:\n  %q", want, argv)
+	}
+	if ab.SyncDir(j) != `C:\tmp\dayzmod\mymod\core` {
+		t.Errorf("SyncDir = %q, want it under the per-repo TempDir", ab.SyncDir(j))
 	}
 }

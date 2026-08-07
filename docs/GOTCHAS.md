@@ -85,16 +85,31 @@ mission init. So it looks like a mod problem when it is really a config one.
 
 ## Packing
 
-### AddonBuilder never cleans its temp cache
+### AddonBuilder never cleans its temp cache, and picks its own location
 
-It syncs sources into `%LOCALAPPDATA%\Temp\<addon lowercased>` and leaves them
-there. Files *deleted* from the source tree linger in that cache and keep shipping.
+It mirrors and binarises sources into a temp folder and leaves them there. Files
+*deleted* from the source tree linger in that cache and keep shipping.
 
 Real incident, 2026-07-26: a never-committed script file shipped inside a logic PBO
 from the temp directory alone, and surfaced in game as `Undefined function`.
 
-*Guarded.* `addonbuilder.Preflight` wipes the cache, the staged PBO and the output
-PBO before every run.
+Wiping it is only half the job, because **where** it is cannot be derived. From
+AddonBuilder's own documentation for `-temp`: *"if no value is present then the last
+folder is used"*. Omit the flag and the cache goes wherever some earlier run left
+it, which is persisted state exactly like pboProject's sticky options. Observed on
+one machine: one repo cached flat at `%TEMP%\<addon>` while another nested it several
+directories deep, under a name that appeared nowhere in either repo. A wipe aimed at
+a derived path clears a directory nothing writes to, and the build looks guarded
+while the stale file ships.
+
+*Guarded.* `-temp` is stated on every invocation, pointing at
+`%TEMP%\dayzmod\<mod id>\<addon lowercased>`, and that is the directory `Preflight`
+wipes. Stating it removes the guesswork, and the mod id keeps two repos with an
+addon of the same name from sharing one cache.
+
+The cost is deliberate: AddonBuilder reuses a warm cache to binarise faster, and
+wiping gives that up on every build. A stale file that ships is worse than a build
+that takes longer.
 
 ### pboProject needs a console, because signing shells out
 

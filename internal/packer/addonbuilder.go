@@ -48,7 +48,12 @@ func (a *AddonBuilder) Argv(j Job) ([]string, error) {
 		return nil, fmt.Errorf("packer: AddonBuilder cannot obfuscate; addon %q needs the pboproject packer", j.AddonName)
 	}
 
-	argv := []string{a.Exe, "-prefix=" + j.Prefix}
+	// -temp is stated on every run, never left out. From AddonBuilder's own
+	// documentation: "if no value is present then the last folder is used". So an
+	// omitted -temp means a folder persisted from some earlier run, which is how
+	// the cache ends up somewhere the packer is not looking and a wipe clears a
+	// directory nothing writes to.
+	argv := []string{a.Exe, "-prefix=" + j.Prefix, "-temp=" + a.SyncDir(j)}
 	if j.IncludeFile != "" {
 		argv = append(argv, "-include="+j.IncludeFile)
 	}
@@ -61,8 +66,13 @@ func (a *AddonBuilder) Argv(j Job) ([]string, error) {
 	return argv, nil
 }
 
-// SyncDir is the directory AddonBuilder mirrors sources into before packing,
-// namely %LOCALAPPDATA%\Temp\<addon name lowercased>.
+// SyncDir is the directory AddonBuilder mirrors and binarises sources into. It
+// is passed as -temp on every run, so this is where the cache is rather than
+// where we hope it is.
+//
+// Namespaced by TempDir, which the pipeline sets per repo. Two repos with an
+// addon of the same name would otherwise share one cache, and clearing it for
+// one would throw away the other's binarised output.
 func (a *AddonBuilder) SyncDir(j Job) string {
 	base := a.TempDir
 	if base == "" {
