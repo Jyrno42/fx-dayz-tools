@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -384,4 +385,38 @@ func (p *PboProject) Pack(ctx context.Context, r proc.Runner, j Job) (proc.Resul
 			j.AddonName, p.PboPath(j), res.Tail(20))
 	}
 	return res, nil
+}
+
+// loadedFile matches pboProject's per-file record in the packing log, e.g.
+//
+//	Scripts\4_World\some_script.c:loading...
+var loadedFile = regexp.MustCompile(`(?m)^(.+?):loading\.\.\.`)
+
+// PackedFiles reads the files pboProject reported loading.
+//
+// It reports the source names, so this works on an obfuscated pack too: the log
+// records what went in, before any of it was scrambled.
+//
+// The list is not exhaustive. Configs, texture headers and binarised models go
+// through phases that log differently, so a caller should treat this as a floor
+// rather than the full set.
+func (p *PboProject) PackedFiles(_ proc.Result, j Job) ([]string, bool, error) {
+	if j.PboProject.LogDir == "" {
+		return nil, false, nil
+	}
+	path := filepath.Join(j.PboProject.LogDir, j.AddonName+".packing.log")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		// No log is not a verification failure. Pack already refuses a run that
+		// produced no PBO, and it names this file when it does.
+		return nil, false, nil
+	}
+	var files []string
+	for _, m := range loadedFile.FindAllStringSubmatch(string(body), -1) {
+		name := strings.TrimSpace(m[1])
+		if name != "" {
+			files = append(files, name)
+		}
+	}
+	return files, true, nil
 }

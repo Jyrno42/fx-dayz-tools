@@ -103,6 +103,7 @@ func newBuildCmd(g *global) *cobra.Command {
 	f.StringVar(&opts.Addon, "addon", "", "only this addon")
 	f.BoolVar(&opts.SkipHooks, "no-hooks", false, "skip the configured pre-build hooks")
 	f.BoolVar(&opts.SkipDeploy, "no-deploy", false, "pack without copying into the game installs")
+	f.BoolVar(&opts.NoPrune, "no-prune", false, "keep PBOs this build placed but no longer produces")
 	return cmd
 }
 

@@ -40,6 +40,21 @@ var DefaultNoisePatterns = []string{
 	"trying to set muzzle index",
 }
 
+// warningMarkers identify a line the engine already labelled a warning. DayZ
+// tags its own with a bracketed severity, e.g. "ANIMATION (W): ...".
+var warningMarkers = []string{"(w):", "(w) :", "warning:"}
+
+// isWarning reports whether a matched line is a warning rather than a failure.
+func isWarning(line string) bool {
+	lowered := strings.ToLower(line)
+	for _, m := range warningMarkers {
+		if strings.Contains(lowered, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // modulePrefix identifies the lines reporting a compiled script module.
 const modulePrefix = "SCRIPT"
 
@@ -55,6 +70,9 @@ type Hit struct {
 	Line    int
 	Text    string
 	Pattern string
+	// Warning marks a line the engine reported as a warning rather than an
+	// error. They are worth showing and not worth failing on.
+	Warning bool
 }
 
 // Report is the outcome of a scan.
@@ -63,10 +81,38 @@ type Report struct {
 	Modules []Module
 	Hits    []Hit
 	Lines   int
+	// Truncated marks a report that stopped before the log ended, which the live
+	// tail does as soon as something matches. Everything counted here is then a
+	// lower bound, and saying "3 modules compiled" would claim the other two
+	// failed when they were simply never reached.
+	Truncated bool
 }
 
-// OK reports whether the scripts compiled without errors.
-func (r Report) OK() bool { return len(r.Hits) == 0 }
+// OK reports whether the scripts compiled without errors. Warnings do not count:
+// a (W) line is not a compile failure, and upstream maps ship them.
+func (r Report) OK() bool { return len(r.Errors()) == 0 }
+
+// Errors returns the hits that are genuine failures.
+func (r Report) Errors() []Hit {
+	var out []Hit
+	for _, h := range r.Hits {
+		if !h.Warning {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// Warnings returns the hits that matched but are not failures.
+func (r Report) Warnings() []Hit {
+	var out []Hit
+	for _, h := range r.Hits {
+		if h.Warning {
+			out = append(out, h)
+		}
+	}
+	return out
+}
 
 // Options tunes a scan.
 type Options struct {
@@ -104,7 +150,12 @@ func Scan(r io.Reader, opts Options) (Report, error) {
 			continue
 		}
 		if pattern, ok := firstMatch(lowered, noisePatterns, errorPatterns); ok {
-			rep.Hits = append(rep.Hits, Hit{Line: rep.Lines, Text: strings.TrimSpace(line), Pattern: pattern})
+			rep.Hits = append(rep.Hits, Hit{
+				Line:    rep.Lines,
+				Text:    strings.TrimSpace(line),
+				Pattern: pattern,
+				Warning: isWarning(line),
+			})
 		}
 	}
 	if err := sc.Err(); err != nil {

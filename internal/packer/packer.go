@@ -69,6 +69,11 @@ type Caps struct {
 	// StickyOptions means unspecified options get inherited from persisted
 	// state, so every invocation has to state every option explicitly.
 	StickyOptions bool
+	// ReportsEveryFile means PackedFiles accounts for every source file that
+	// belongs in the PBO, so a caller may compare the two sets exactly. When it
+	// is false the list is a floor: the packer logs some phases without naming
+	// the files they covered.
+	ReportsEveryFile bool
 }
 
 // Packer builds PBOs.
@@ -84,6 +89,14 @@ type Packer interface {
 	Preflight(ctx context.Context, j Job) (cleanup func() error, err error)
 	// Pack runs the packer.
 	Pack(ctx context.Context, r proc.Runner, j Job) (proc.Result, error)
+	// PackedFiles reports the source files the packer said it took, as paths
+	// relative to the source directory.
+	//
+	// Both packers name every file they read in their own log, which is the only
+	// account of what went in that does not require opening the PBO. known is
+	// false when a packer cannot answer, so a caller can tell "it packed nothing"
+	// apart from "it did not say".
+	PackedFiles(res proc.Result, j Job) (files []string, known bool, err error)
 	// PboPath reports where the finished PBO will be.
 	PboPath(j Job) string
 }

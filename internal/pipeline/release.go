@@ -307,12 +307,16 @@ func (b *Builder) packRelease(
 			if err != nil {
 				return nil, err
 			}
-			_, packErr := p.Pack(ctx, b.Runner, job)
+			res, packErr := p.Pack(ctx, b.Runner, job)
 			if cerr := cleanup(); cerr != nil {
 				b.Report.Detail("cleanup after %s: %v", addonName, cerr)
 			}
 			if packErr != nil {
 				return nil, packErr
+			}
+			srcDir := filepath.Join(b.Mod.Root, filepath.FromSlash(set.Source), addonName)
+			if err := b.verifyPacked(p, res, job, srcDir); err != nil {
+				return nil, err
 			}
 
 			packed = append(packed, packedAddon{

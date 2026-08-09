@@ -570,3 +570,103 @@ func TestLedgerLeavesAChangedFileAlone(t *testing.T) {
 		t.Error("a file changed since it was placed should not be deleted")
 	}
 }
+
+// The rename case: nothing points at the old PBO any more, so no rebuild removes
+// it and it keeps registering its classes (see pruneDeployed).
+func TestPruneRemovesARenamedAddonsOldPbo(t *testing.T) {
+	cfg, host := testRepo(t)
+	server := t.TempDir()
+	host.Paths.DayZServer = server
+	host.Path = filepath.Join(t.TempDir(), "config.yml")
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addons := filepath.Join(server, "@t", "Addons")
+	if err := os.MkdirAll(addons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(addons, "OldName.pbo")
+	if err := os.WriteFile(old, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The tool placed it on an earlier run, under its previous name.
+	if err := b.recordDeployed(server, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.pruneDeployed(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Error("the renamed addon's old PBO survived and would still register its classes")
+	}
+}
+
+// A PBO the tool never placed is left alone, whoever put it there. Without the
+// ledger this would delete a hand-installed mod.
+func TestPruneLeavesUnrecordedPbosAlone(t *testing.T) {
+	cfg, host := testRepo(t)
+	server := t.TempDir()
+	host.Paths.DayZServer = server
+	host.Path = filepath.Join(t.TempDir(), "config.yml")
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addons := filepath.Join(server, "@t", "Addons")
+	if err := os.MkdirAll(addons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	theirs := filepath.Join(addons, "SomeoneElses.pbo")
+	if err := os.WriteFile(theirs, []byte("not ours"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.pruneDeployed(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(theirs); err != nil {
+		t.Error("a PBO the tool never placed must not be removed")
+	}
+}
+
+// --no-prune is the escape hatch for a folder someone is deliberately keeping
+// something in.
+func TestNoPruneKeepsStalePbos(t *testing.T) {
+	cfg, host := testRepo(t)
+	server := t.TempDir()
+	host.Paths.DayZServer = server
+	host.Path = filepath.Join(t.TempDir(), "config.yml")
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addons := filepath.Join(server, "@t", "Addons")
+	if err := os.MkdirAll(addons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(addons, "OldName.pbo")
+	if err := os.WriteFile(old, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.recordDeployed(server, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.pruneDeployed(ch, Options{NoPrune: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Error("--no-prune should keep it")
+	}
+}

@@ -259,3 +259,45 @@ func asErrNoLog(err error, target **ErrNoLog) bool {
 	}
 	return false
 }
+
+// A (W) line is not a compile failure. Upstream maps ship warnings of their own,
+// and counting those as errors makes every run exit non-zero while none of the
+// real checks have fired.
+func TestWarningsDoNotFailTheRun(t *testing.T) {
+	log := strings.Join([]string{
+		`12:00:00 SCRIPT (W): Undefined variable something in an upstream FIX-ME`,
+		`12:00:01 SCRIPT       : Module: Game; loaded 5x files`,
+	}, "\n")
+
+	rep, err := Scan(strings.NewReader(log), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Hits) != 1 {
+		t.Fatalf("hits = %d, want the warning matched", len(rep.Hits))
+	}
+	if len(rep.Warnings()) != 1 {
+		t.Errorf("the (W) line should be classified as a warning: %+v", rep.Hits)
+	}
+	if len(rep.Errors()) != 0 {
+		t.Errorf("a warning must not count as an error: %+v", rep.Errors())
+	}
+	if !rep.OK() {
+		t.Error("a run whose only hits are warnings should pass")
+	}
+}
+
+// A real error still fails, so relaxing warnings did not relax everything.
+func TestErrorsStillFailTheRun(t *testing.T) {
+	log := `12:00:00 SCRIPT       : Compiler Error: no such thing`
+	rep, err := Scan(strings.NewReader(log), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.OK() {
+		t.Fatal("a compiler error should fail the run")
+	}
+	if len(rep.Errors()) != 1 {
+		t.Errorf("errors = %d, want 1", len(rep.Errors()))
+	}
+}

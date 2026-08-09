@@ -95,11 +95,31 @@ a shell with a config in it.
 Nothing about the failure is visible at build time. It surfaces in game as a mod
 that loads and does nothing, which is a symptom plenty of unrelated causes share.
 
-*Guarded.* `-include` is passed on every invocation. A repo's own `.buildfiles` is
-used when it has one, and otherwise the list is written from `include_extensions`
-in the manifest, which is what `init` would have scaffolded. The allowlist now
-depends on the manifest rather than on whether a file was ever created, so a repo
-assembled by hand behaves like a scaffolded one.
+*Guarded, twice.* `-include` is passed on every invocation: a repo's own
+`.buildfiles` when it has one, otherwise a list written from `include_extensions`
+in the manifest. The allowlist depends on the manifest rather than on whether a
+file was ever created, so a repo assembled by hand behaves like a scaffolded one.
+
+And the pack is now checked afterwards. Both packers name the files they read in
+their own log, so the build compares that against the source files the include
+list covers, and fails when they disagree. No PBO is opened: the logs record the
+source names, which also means the check works on an obfuscated pack.
+
+AddonBuilder's log accounts for every file, so its comparison is exact.
+pboProject logs configs, texture headers and binarised models through phases that
+name no files, so there its list is a floor and only an empty one fails. A check
+that fired on healthy builds would be worse than no check at all.
+
+### Deploying does not remove what it stopped producing
+
+Rename an addon and the old PBO stays in the client and server installs, still
+registering its classes. Nothing points at it any more, so no rebuild touches it,
+and `--force` does not either: force bypasses the lockfile hash, which is about
+what to rebuild rather than what to remove.
+
+*Guarded.* Every PBO the build copies into an install is recorded, and a full
+build removes the ones it recorded but no longer produces. A PBO the tool never
+placed is left alone whoever put it there, and `--no-prune` keeps everything.
 
 ### AddonBuilder never cleans its temp cache, and picks its own location
 

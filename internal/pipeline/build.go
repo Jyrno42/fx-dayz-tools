@@ -31,6 +31,9 @@ type Options struct {
 	SkipHooks bool
 	// SkipDeploy packs without copying into the game installs.
 	SkipDeploy bool
+	// NoPrune keeps PBOs this build placed but no longer produces, for a folder
+	// someone is deliberately keeping something in.
+	NoPrune bool
 }
 
 // Outcome is what happened to one addon.
@@ -112,7 +115,12 @@ func (b *Builder) Build(ctx context.Context, opts Options) ([]Outcome, error) {
 	// After the packed addons, so a failure here does not lose their lockfile
 	// entries. Skipped when the run is narrowed to one set or addon, since the
 	// caller asked for that one thing rather than a whole install.
+	// Both are skipped on a narrowed run: the caller asked for one addon, not a
+	// reconciliation of the whole install.
 	if opts.Set == "" && opts.Addon == "" {
+		if err := b.pruneDeployed(ch, opts); err != nil {
+			return outcomes, err
+		}
 		if err := b.deployIncludes(ch, opts); err != nil {
 			if saveErr := lock.Save(); saveErr != nil {
 				b.Report.Detail("could not save the lockfile: %v", saveErr)
@@ -213,7 +221,12 @@ func (b *Builder) buildAddon(
 		}
 	}()
 
-	if _, err := p.Pack(ctx, b.Runner, job); err != nil {
+	res, err := p.Pack(ctx, b.Runner, job)
+	if err != nil {
+		return out, err
+	}
+	// A pack that exits zero is not proof it packed anything.
+	if err := b.verifyPacked(p, res, job, sourceDir); err != nil {
 		return out, err
 	}
 	out.Packed = true
@@ -372,7 +385,11 @@ func (b *Builder) deploy(ch *modcfg.Channel, set *modcfg.AddonSet, pbo string) (
 		if err := os.MkdirAll(dest, 0o755); err != nil {
 			return done, fmt.Errorf("creating %s: %w", dest, err)
 		}
-		if err := copyFile(pbo, filepath.Join(dest, filepath.Base(pbo))); err != nil {
+		dst := filepath.Join(dest, filepath.Base(pbo))
+		if err := copyFile(pbo, dst); err != nil {
+			return done, err
+		}
+		if err := b.recordDeployed(root, dst); err != nil {
 			return done, err
 		}
 		done = append(done, dest)
@@ -791,4 +808,85 @@ func boolOrFalse(p *bool) bool {
 func fileExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && !fi.IsDir()
+}
+
+// recordDeployed notes a PBO the build copied into a game install, so a later
+// run can tell its own output apart from anything else in that folder.
+func (b *Builder) recordDeployed(root, dst string) error {
+	ledger, err := b.loadPlacements()
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, dst)
+	if err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	sum, _, err := machine.FileSum(dst)
+	if err != nil {
+		return fmt.Errorf("deploy: %w", err)
+	}
+	ledger.Record(root, rel, b.Mod.Root, "", sum)
+	return ledger.Save()
+}
+
+// pruneDeployed removes PBOs this build put in a game install and no longer
+// produces.
+//
+// Renaming an addon leaves the old PBO in both installs, still registering its
+// classes, and a rebuild does not touch it because nothing points at it any
+// more. The ledger is what makes this safe: a PBO the tool never placed is left
+// alone, whoever put it there.
+func (b *Builder) pruneDeployed(ch *modcfg.Channel, opts Options) error {
+	if b.Runner.DryRun() || opts.SkipDeploy || len(ch.Deploy) == 0 {
+		return nil
+	}
+
+	// Every PBO this channel produces, by install-relative path.
+	wanted := map[string]bool{}
+	for _, set := range b.Mod.SetsFor(ch) {
+		for _, addon := range set.AddonNames() {
+			wanted[destKeyOf(filepath.Join(set.ModName, "Addons", addon+".pbo"))] = true
+		}
+	}
+
+	ledger, err := b.loadPlacements()
+	if err != nil {
+		return err
+	}
+
+	for _, target := range ch.Deploy {
+		root := b.Host.Paths.DayZClient
+		if target == modcfg.TargetServer {
+			root = b.Host.Paths.DayZServer
+		}
+		if root == "" {
+			continue
+		}
+		for _, rel := range ledger.Stale(root, nil) {
+			// Only PBOs in a mod folder this channel builds into. Loose entries
+			// and other repos' output are reconciled by deployIncludes.
+			if !strings.EqualFold(filepath.Ext(rel), ".pbo") || wanted[destKeyOf(rel)] {
+				continue
+			}
+			if placed, ok := ledger.Placed(root, rel); !ok || placed.Repo != b.Mod.Root {
+				continue
+			}
+			dst := filepath.Join(root, filepath.FromSlash(rel))
+			if opts.NoPrune {
+				b.Report.Detail("stale %s left in place (--no-prune)", rel)
+				continue
+			}
+			if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("deploy: removing %s: %w", dst, err)
+			}
+			b.Report.Step("%-28s %s", "removed stale", rel)
+			ledger.Forget(root, rel)
+		}
+	}
+	return ledger.Save()
+}
+
+// destKeyOf normalises an install-relative path the way the ledger does.
+func destKeyOf(rel string) string {
+	return strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
 }

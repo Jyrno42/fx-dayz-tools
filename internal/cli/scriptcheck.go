@@ -167,9 +167,13 @@ func (g *global) watchLog(
 			}
 			acc.Add(rep)
 
-			if len(acc.Report.Hits) > 0 {
+			// Stop on a real failure, but not on a warning: upstream content ships
+			// warnings, and bailing on one would report the rest as never compiled.
+			if len(acc.Report.Errors()) > 0 {
 				p.Line("  errors appeared after %s; not waiting out the rest", time.Since(started).Round(time.Millisecond))
-				return acc.Report, nil
+				rep := acc.Report
+				rep.Truncated = true
+				return rep, nil
 			}
 		}
 
@@ -247,7 +251,27 @@ func (g *global) reportScriptLog(rep scriptlog.Report, maxHits int, showMods boo
 	p.Section("Enforce script check")
 	p.Check(ui.Info, "log", rep.Path)
 	p.Check(ui.Info, "lines scanned", plural(rep.Lines, "line"))
-	p.Check(ui.Info, "modules compiled", plural(len(rep.Modules), "module"))
+
+	// A truncated scan counted what it had reached, not what compiled. Reporting
+	// "3 modules compiled" reads as "the other two failed", which is how a run
+	// that stopped early gets mistaken for a run that found five failures.
+	if rep.Truncated {
+		p.Check(ui.Info, "modules seen", plural(len(rep.Modules), "module")+
+			" before stopping early; the rest were never reached")
+	} else {
+		p.Check(ui.Info, "modules compiled", plural(len(rep.Modules), "module"))
+	}
+
+	if warns := rep.Warnings(); len(warns) > 0 {
+		p.Check(ui.Warn, "warnings", plural(len(warns), "line")+
+			" matched but are not compile failures")
+		for i, h := range warns {
+			if i >= maxHits {
+				break
+			}
+			p.Detail("line %d: %s", h.Line, h.Text)
+		}
+	}
 
 	if rep.OK() {
 		p.Check(ui.OK, "errors", "none")

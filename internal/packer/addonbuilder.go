@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/proc"
@@ -30,7 +31,10 @@ func (a *AddonBuilder) Caps() Caps {
 		NeedsPDrive:   true,
 		// This is why SyncDir exists. AddonBuilder never cleans up after itself.
 		SelfCleansTemp: false,
-		StickyOptions:  false,
+		// -include is an explicit "sync these", and every synced file is logged,
+		// so the log accounts for the whole PBO.
+		ReportsEveryFile: true,
+		StickyOptions:    false,
 	}
 }
 
@@ -148,4 +152,23 @@ func (a *AddonBuilder) Pack(ctx context.Context, r proc.Runner, j Job) (proc.Res
 			j.AddonName, a.PboPath(j), res.Tail(15))
 	}
 	return res, nil
+}
+
+// syncedFile matches AddonBuilder's per-file sync record, e.g.
+//
+//	[2026-08-09 12:47:50,889] [INFO ]: Syncing file "Scripts\3_Game\Credits.c"
+var syncedFile = regexp.MustCompile(`Syncing file "([^"]+)"`)
+
+// PackedFiles reads the files AddonBuilder reported syncing, which is the whole
+// account of what went into the PBO.
+func (a *AddonBuilder) PackedFiles(res proc.Result, _ Job) ([]string, bool, error) {
+	out := res.Output()
+	if strings.TrimSpace(out) == "" {
+		return nil, false, nil
+	}
+	var files []string
+	for _, m := range syncedFile.FindAllStringSubmatch(out, -1) {
+		files = append(files, m[1])
+	}
+	return files, true, nil
 }
