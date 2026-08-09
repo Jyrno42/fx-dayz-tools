@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -668,5 +669,78 @@ func TestNoPruneKeepsStalePbos(t *testing.T) {
 	}
 	if _, err := os.Stat(old); err != nil {
 		t.Error("--no-prune should keep it")
+	}
+}
+
+// The regression: a full build must not delete the addons it just deployed.
+func TestPruneKeepsWhatThisBuildJustDeployed(t *testing.T) {
+	cfg, host := testRepo(t)
+	server := t.TempDir()
+	host.Paths.DayZServer = server
+	host.Path = filepath.Join(t.TempDir(), "config.yml")
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+
+	if _, err := b.Build(context.Background(), Options{Channel: "dev"}); err != nil {
+		t.Fatal(err)
+	}
+
+	deployed := filepath.Join(server, "@t", "Addons", "TestAddon.pbo")
+	if _, err := os.Stat(deployed); err != nil {
+		t.Fatalf("the addon this build produced was removed by the prune: %v", err)
+	}
+}
+
+// The regression. Two reconcilers share the ledger: deployIncludes owns loose
+// into: files, pruneDeployed owns packed PBOs. deployIncludes runs second, and
+// when it treated every entry as its own it deleted every addon the build had
+// just deployed, leaving an install holding only the vendored prebuilts.
+//
+// The earlier prune tests all passed because none of them declared an include,
+// so the second reconciler never ran.
+func TestIncludesAndPackedAddonsSurviveTheSameBuild(t *testing.T) {
+	dir, _ := vendorDir(t)
+	vendorRoot := filepath.Dir(dir)
+
+	cfg, host := testRepo(t)
+	server := t.TempDir()
+	host.Paths.DayZServer = server
+
+	// The include's source has to sit under the repo root.
+	pre := filepath.Join(cfg.Root, "prebuilt")
+	if err := os.MkdirAll(pre, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(vendorRoot, "prebuilt", "Signed.pbo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pre, "Vendored.pbo"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Include = []modcfg.IncludeSpec{{From: "prebuilt"}}
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	if _, err := b.Build(context.Background(), Options{Channel: "dev"}); err != nil {
+		t.Fatal(err)
+	}
+
+	addons := filepath.Join(server, "@t", "Addons")
+	if _, err := os.Stat(filepath.Join(addons, "TestAddon.pbo")); err != nil {
+		t.Errorf("the packed addon was deleted by the include reconciler: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(addons, "Vendored.pbo")); err != nil {
+		t.Errorf("the include did not survive: %v", err)
+	}
+
+	// And again, since the second run is where a reconciler sees the other's
+	// entries already in the ledger.
+	if _, err := b.Build(context.Background(), Options{Channel: "dev", Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"TestAddon.pbo", "Vendored.pbo"} {
+		if _, err := os.Stat(filepath.Join(addons, name)); err != nil {
+			t.Errorf("%s did not survive a second build: %v", name, err)
+		}
 	}
 }

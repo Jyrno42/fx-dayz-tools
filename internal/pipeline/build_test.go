@@ -72,6 +72,10 @@ launch:
 	host.Paths.DayZTools = filepath.Join(root, "tools")
 	host.Paths.DayZServer = filepath.Join(root, "server")
 	host.Paths.BuildDir = filepath.Join(root, "build")
+	// Point the machine config somewhere disposable. Without this the placements
+	// ledger resolves to the real user config directory, so tests write to the
+	// developer's own machine state and read each other's leftovers.
+	host.Path = filepath.Join(root, "machine", "config.yml")
 	return cfg, host
 }
 

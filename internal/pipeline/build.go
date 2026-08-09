@@ -616,7 +616,7 @@ func (b *Builder) placeLoose(
 				"delete it if the vendored copy should win", filepath.Base(dst), dst)
 	case exists && onDisk == sum && !opts.Force:
 		// Already the file we want.
-		ledger.Record(root, rel, b.Mod.Root, inc.From, sum)
+		ledger.Record(root, rel, b.Mod.Root, inc.From, sum, machine.KindLoose)
 		return false, nil
 	}
 
@@ -626,7 +626,7 @@ func (b *Builder) placeLoose(
 	if err := copyFile(src, dst); err != nil {
 		return false, fmt.Errorf("include: %s: %w", filepath.Base(src), err)
 	}
-	ledger.Record(root, rel, b.Mod.Root, inc.From, sum)
+	ledger.Record(root, rel, b.Mod.Root, inc.From, sum, machine.KindLoose)
 	return true, nil
 }
 
@@ -649,7 +649,7 @@ func (b *Builder) reconcilePlacements(ledger *machine.Placements, ch *modcfg.Cha
 		if root == "" {
 			continue
 		}
-		for _, rel := range ledger.Stale(root, wanted[root]) {
+		for _, rel := range ledger.Stale(root, wanted[root], machine.KindLoose) {
 			dst := filepath.Join(root, filepath.FromSlash(rel))
 			recorded, _ := ledger.Placed(root, rel)
 
@@ -825,7 +825,7 @@ func (b *Builder) recordDeployed(root, dst string) error {
 	if err != nil {
 		return fmt.Errorf("deploy: %w", err)
 	}
-	ledger.Record(root, rel, b.Mod.Root, "", sum)
+	ledger.Record(root, rel, b.Mod.Root, "", sum, machine.KindAddon)
 	return ledger.Save()
 }
 
@@ -862,7 +862,7 @@ func (b *Builder) pruneDeployed(ch *modcfg.Channel, opts Options) error {
 		if root == "" {
 			continue
 		}
-		for _, rel := range ledger.Stale(root, nil) {
+		for _, rel := range ledger.Stale(root, nil, machine.KindAddon) {
 			// Only PBOs in a mod folder this channel builds into. Loose entries
 			// and other repos' output are reconciled by deployIncludes.
 			if !strings.EqualFold(filepath.Ext(rel), ".pbo") || wanted[destKeyOf(rel)] {

@@ -15,6 +15,17 @@ import (
 // PlacementsFile is where the ledger lives, beside the machine config.
 const PlacementsFile = "placements.json"
 
+// Placement kinds. Two reconcilers share this ledger and must not collect each
+// other's entries: the include deployer owns loose files, and the addon deployer
+// owns PBOs it packed. Without the distinction, whichever runs last treats the
+// other's entries as stale and deletes them.
+const (
+	// KindLoose is a prebuilt PBO copied to an into: destination.
+	KindLoose = "loose"
+	// KindAddon is a PBO this repo packed and deployed into its @mod folder.
+	KindAddon = "addon"
+)
+
 // Placement records one file the tool copied into a directory it does not own.
 type Placement struct {
 	// Repo is the mod repo that put the file there. It is what lets a build in
@@ -25,6 +36,8 @@ type Placement struct {
 	// SHA256 is the content as placed. A file that no longer matches was changed
 	// by someone else, and is left alone rather than deleted.
 	SHA256 string `json:"sha256"`
+	// Kind is which reconciler owns this entry.
+	Kind string `json:"kind"`
 }
 
 // Placements is a ledger of files written outside the tool's own output folders.
@@ -91,12 +104,12 @@ func destKey(rel string) string {
 }
 
 // Record notes that a file now exists at rel under install root.
-func (p *Placements) Record(root, rel, repo, from, sum string) {
+func (p *Placements) Record(root, rel, repo, from, sum, kind string) {
 	ik := installKey(root)
 	if p.Installs[ik] == nil {
 		p.Installs[ik] = map[string]Placement{}
 	}
-	p.Installs[ik][destKey(rel)] = Placement{Repo: repo, From: from, SHA256: sum}
+	p.Installs[ik][destKey(rel)] = Placement{Repo: repo, From: from, SHA256: sum, Kind: kind}
 }
 
 // Placed reports the recorded placement for a destination.
@@ -112,16 +125,19 @@ func (p *Placements) Placed(root, rel string) (Placement, bool) {
 // one install is a real conflict rather than a merge, and the build running now
 // is the one that gets to say what should be there. Running the other repo again
 // puts its files back.
-func (p *Placements) Stale(root string, wanted []string) []string {
+func (p *Placements) Stale(root string, wanted []string, kind string) []string {
 	keep := map[string]bool{}
 	for _, w := range wanted {
 		keep[destKey(w)] = true
 	}
 	var out []string
-	for rel := range p.Installs[installKey(root)] {
-		if !keep[rel] {
-			out = append(out, rel)
+	for rel, placed := range p.Installs[installKey(root)] {
+		// Only this reconciler's own entries. Collecting another kind here is how
+		// one deployer ends up deleting what the other just wrote.
+		if placed.Kind != kind || keep[rel] {
+			continue
 		}
+		out = append(out, rel)
 	}
 	sort.Strings(out)
 	return out
