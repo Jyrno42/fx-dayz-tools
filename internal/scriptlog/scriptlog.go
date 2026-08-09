@@ -40,6 +40,33 @@ var DefaultNoisePatterns = []string{
 	"trying to set muzzle index",
 }
 
+// classifyLine decides what one log line is: a compiled module, a hit worth
+// reporting, or neither.
+//
+// The live tail and a whole-file scan both go through here. They used to carry
+// separate copies of this logic, which drifted: a change to one left the other
+// classifying warnings as failures.
+func classifyLine(n int, line string, noise, errors []string) (Module, bool, Hit, bool) {
+	if mod, ok := moduleOf(line); ok {
+		return mod, true, Hit{}, false
+	}
+	lowered := strings.ToLower(line)
+	// Noise wins over errors. A noise line that happens to contain an error word
+	// is still noise.
+	if containsAny(lowered, noise) {
+		return Module{}, false, Hit{}, false
+	}
+	if pattern, ok := firstMatch(lowered, noise, errors); ok {
+		return Module{}, false, Hit{
+			Line:    n,
+			Text:    strings.TrimSpace(line),
+			Pattern: pattern,
+			Warning: isWarning(line),
+		}, true
+	}
+	return Module{}, false, Hit{}, false
+}
+
 // warningMarkers identify a line the engine already labelled a warning. DayZ
 // tags its own with a bracketed severity, e.g. "ANIMATION (W): ...".
 var warningMarkers = []string{"(w):", "(w) :", "warning:"}
@@ -137,25 +164,13 @@ func Scan(r io.Reader, opts Options) (Report, error) {
 	for sc.Scan() {
 		rep.Lines++
 		line := strings.TrimRight(sc.Text(), "\r")
-		lowered := strings.ToLower(line)
 
-		if mod, ok := moduleOf(line); ok {
+		mod, isMod, hit, isHit := classifyLine(rep.Lines, line, noisePatterns, errorPatterns)
+		switch {
+		case isMod:
 			rep.Modules = append(rep.Modules, mod)
-			continue
-		}
-
-		// Noise wins over errors. A noise line that happens to contain an error
-		// word is still noise.
-		if containsAny(lowered, noisePatterns) {
-			continue
-		}
-		if pattern, ok := firstMatch(lowered, noisePatterns, errorPatterns); ok {
-			rep.Hits = append(rep.Hits, Hit{
-				Line:    rep.Lines,
-				Text:    strings.TrimSpace(line),
-				Pattern: pattern,
-				Warning: isWarning(line),
-			})
+		case isHit:
+			rep.Hits = append(rep.Hits, hit)
 		}
 	}
 	if err := sc.Err(); err != nil {

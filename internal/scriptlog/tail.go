@@ -97,16 +97,12 @@ func (t *Tailer) Poll() (Report, error) {
 		t.line++
 		line := strings.TrimRight(sc.Text(), "\r")
 
-		if mod, ok := moduleOf(line); ok {
+		mod, isMod, hit, isHit := classifyLine(t.line, line, t.noisePatterns, t.errorPatterns)
+		switch {
+		case isMod:
 			rep.Modules = append(rep.Modules, mod)
-			continue
-		}
-		lowered := strings.ToLower(line)
-		if containsAny(lowered, t.noisePatterns) {
-			continue
-		}
-		if pattern, ok := firstMatch(lowered, t.noisePatterns, t.errorPatterns); ok {
-			rep.Hits = append(rep.Hits, Hit{Line: t.line, Text: strings.TrimSpace(line), Pattern: pattern})
+		case isHit:
+			rep.Hits = append(rep.Hits, hit)
 		}
 	}
 	rep.Lines = t.line
