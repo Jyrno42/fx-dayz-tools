@@ -85,6 +85,22 @@ mission init. So it looks like a mod problem when it is really a config one.
 
 ## Packing
 
+### AddonBuilder's own extension list drops scripts, models and materials
+
+Give it no `-include` and it falls back to a built-in allowlist that does not cover
+`.c`, `.p3d` or `.rvmat`. It binarises `config.cpp` into `config.bin`, drops
+everything else, and exits zero. The build reports one addon packed and the PBO is
+a shell with a config in it.
+
+Nothing about the failure is visible at build time. It surfaces in game as a mod
+that loads and does nothing, which is a symptom plenty of unrelated causes share.
+
+*Guarded.* `-include` is passed on every invocation. A repo's own `.buildfiles` is
+used when it has one, and otherwise the list is written from `include_extensions`
+in the manifest, which is what `init` would have scaffolded. The allowlist now
+depends on the manifest rather than on whether a file was ever created, so a repo
+assembled by hand behaves like a scaffolded one.
+
 ### AddonBuilder never cleans its temp cache, and picks its own location
 
 It mirrors and binarises sources into a temp folder and leaves them there. Files

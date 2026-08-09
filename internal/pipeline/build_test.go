@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/hashing"
@@ -170,4 +171,55 @@ func (f *fakeRunner) Run(_ context.Context, c proc.Cmd) (proc.Result, error) {
 		return proc.Result{}, err
 	}
 	return proc.Result{Cmd: c}, nil
+}
+
+// A repo assembled by hand has no committed .buildfiles, and an omitted -include
+// costs it every script, model and material (see includeFile). So the allowlist
+// has to come from the manifest, not from a file that may never be written.
+func TestIncludeListIsNeverOmitted(t *testing.T) {
+	cfg, host := testRepo(t)
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+
+	if _, err := os.Stat(filepath.Join(cfg.Root, ".buildfiles")); !os.IsNotExist(err) {
+		t.Fatal("this fixture is meant to have no committed .buildfiles")
+	}
+
+	got, err := b.includeFile(cfg.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == "" {
+		t.Fatal("no include list, so AddonBuilder would fall back to its own and drop most of the addon")
+	}
+
+	body, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("the generated list was not written: %v", err)
+	}
+	// Scripts, models and materials are all absent from AddonBuilder's own list.
+	for _, ext := range []string{"*.c", "*.p3d", "*.rvmat", "*.paa"} {
+		if !strings.Contains(string(body), ext) {
+			t.Errorf("generated list is missing %s:\n%s", ext, body)
+		}
+	}
+}
+
+// A repo that ships its own .buildfiles keeps using it, since it may have been
+// tuned for content the default list does not name.
+func TestCommittedBuildfilesWins(t *testing.T) {
+	cfg, host := testRepo(t)
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+
+	committed := filepath.Join(cfg.Root, ".buildfiles")
+	if err := os.WriteFile(committed, []byte("*.c;*.special\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := b.includeFile(cfg.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != committed {
+		t.Errorf("include list = %q, want the repo's own %q", got, committed)
+	}
 }

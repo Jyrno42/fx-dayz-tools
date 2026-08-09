@@ -419,7 +419,8 @@ func (d *doctor) checkServerConfig(cfg *modcfg.Config) {
 func (d *doctor) checkBuildFiles(cfg *modcfg.Config) {
 	path := filepath.Join(cfg.Root, ".buildfiles")
 	if !fileExists(path) {
-		d.info(".buildfiles", "not present; `dayzmod init --sync` writes it from include_extensions")
+		d.info(".buildfiles", "not present; the build generates one from include_extensions, "+
+			"and `dayzmod init --sync` commits it")
 		return
 	}
 	d.ok(".buildfiles", path)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/hashing"
@@ -297,9 +298,11 @@ func (b *Builder) job(ch *modcfg.Channel, set *modcfg.AddonSet, addonName string
 		Engine:    modcfg.DefaultEngine,
 	}
 
-	if includes := filepath.Join(pdriveRepo, ".buildfiles"); fileExists(includes) {
-		job.IncludeFile = includes
+	includes, err := b.includeFile(pdriveRepo)
+	if err != nil {
+		return packer.Job{}, err
 	}
+	job.IncludeFile = includes
 	if ch.PboProject != nil {
 		p := ch.PboProject
 		job.Engine = p.Engine
@@ -516,6 +519,37 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 	}
 
 	return b.reconcilePlacements(ledger, ch, wanted)
+}
+
+// includeFile is the -include allowlist handed to AddonBuilder.
+//
+// It is never omitted. Without -include, AddonBuilder falls back to a built-in
+// extension list that does not cover .c, .p3d or .rvmat, so it binarises
+// config.cpp, drops everything else and exits zero. The build reports an addon
+// packed and the PBO holds a config and nothing to go with it.
+//
+// A repo's own .buildfiles wins when it has one. Otherwise the list is written
+// from include_extensions in the manifest, which is the same content `init`
+// would have scaffolded. That way the argv depends on the manifest rather than
+// on whether a file happens to exist in the working tree.
+func (b *Builder) includeFile(pdriveRepo string) (string, error) {
+	if committed := filepath.Join(pdriveRepo, ".buildfiles"); fileExists(committed) {
+		return committed, nil
+	}
+
+	dir := filepath.Join(os.TempDir(), "dayzmod", b.Mod.Mod.ID)
+	generated := filepath.Join(dir, ".buildfiles")
+	if b.Runner.DryRun() {
+		return generated, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("include list: %w", err)
+	}
+	body := strings.Join(b.Mod.IncludeExtensions, ";")
+	if err := os.WriteFile(generated, []byte(body+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("include list: writing %s: %w", generated, err)
+	}
+	return generated, nil
 }
 
 // loadPlacements opens the ledger of files written outside the tool's own
