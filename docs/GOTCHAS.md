@@ -447,12 +447,21 @@ tracks its own published items, so it can update an existing entry without a
 Staging a copy from the repo would only risk handing it a stale one, so `release`
 neither writes nor preserves either file.
 
+### AddonBuilder `-packonly` logs no files
+
+`binarize: false` maps to AddonBuilder's `-packonly`. Verified on 2026-10-06 with
+fx_cannon_01, whose p3ds only exist as ODOL: binarising them crashes Binarize with
+0xC0000005, and `-packonly` packs them as they are.
+
+It runs `CopyToTemp` and `PackOnlyCfgTask` instead of `SyncFoldersTask`, so the log
+has no `Syncing file` lines. The log-based pack check read that as "packed 0 of 21"
+on a PBO that was complete. Pack-only addons are now checked against the PBO's own
+header instead. `config.cpp` ships as text rather than `config.bin`, which the game
+accepts.
+
 ---
 
 ## Unverified
-
-- **`-packonly`** is what I use as AddonBuilder's flag for `binarize: false`. Nothing
-  sets that today, so it has never actually run.
 
 ### pboProject 4.31
 

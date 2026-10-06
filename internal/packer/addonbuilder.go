@@ -161,7 +161,17 @@ var syncedFile = regexp.MustCompile(`Syncing file "([^"]+)"`)
 
 // PackedFiles reads the files AddonBuilder reported syncing, which is the whole
 // account of what went into the PBO.
-func (a *AddonBuilder) PackedFiles(res proc.Result, _ Job) ([]string, bool, error) {
+//
+// -packonly copies the source without a sync step, so there is nothing to read
+// in the log. Those packs are checked against the PBO's own header instead.
+func (a *AddonBuilder) PackedFiles(res proc.Result, j Job) ([]string, bool, error) {
+	if !j.Binarize {
+		files, err := pboEntries(a.PboPath(j))
+		if err != nil {
+			return nil, false, err
+		}
+		return files, true, nil
+	}
 	out := res.Output()
 	if strings.TrimSpace(out) == "" {
 		return nil, false, nil
