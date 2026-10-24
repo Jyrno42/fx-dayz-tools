@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jyrno42/fx-dayz-tools/internal/machine"
 	"github.com/Jyrno42/fx-dayz-tools/internal/modcfg"
 	"github.com/Jyrno42/fx-dayz-tools/internal/proc"
 )
@@ -742,5 +743,72 @@ func TestIncludesAndPackedAddonsSurviveTheSameBuild(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(addons, name)); err != nil {
 			t.Errorf("%s did not survive a second build: %v", name, err)
 		}
+	}
+}
+
+func looseLeftBehind(t *testing.T, host *machine.Config) string {
+	t.Helper()
+	dst := filepath.Join(host.Paths.DayZServer, "addons", "Vendored_Server.pbo")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("theirs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum, _, err := machine.FileSum(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := machine.PlacementsPath(host.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := machine.LoadPlacements(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.Record(host.Paths.DayZServer, "addons/Vendored_Server.pbo",
+		filepath.Join(t.TempDir(), "some-other-repo"), "vendor/x.pbo", sum, machine.KindLoose)
+	if err := ledger.Save(); err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+func TestBuildWithNoIncludesSweepsOtherReposLoosePbos(t *testing.T) {
+	cfg, host := testRepo(t)
+	host.Paths.DayZServer = t.TempDir()
+	dst := looseLeftBehind(t, host)
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.deployIncludes(ch, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Error("the other repo's loose PBO survived; the engine will keep auto-loading it")
+	}
+}
+
+func TestNoPruneKeepsOtherReposLoosePbos(t *testing.T) {
+	cfg, host := testRepo(t)
+	host.Paths.DayZServer = t.TempDir()
+	dst := looseLeftBehind(t, host)
+
+	b := &Builder{Mod: cfg, Host: host, Runner: &fakeRunner{}, Report: silent{}}
+	ch, err := cfg.Channel("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.deployIncludes(ch, Options{NoPrune: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("--no-prune should keep it: %v", err)
 	}
 }

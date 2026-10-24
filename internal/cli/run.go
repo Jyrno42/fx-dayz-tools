@@ -331,7 +331,7 @@ func (g *global) waitForServer(ctx context.Context, lc *launchCtx) error {
 		Abort:   lc.serverDied,
 	})
 	if err != nil {
-		return coded(ExitPreflight, "%v", err)
+		return &CodedError{Code: ExitPreflight, Err: err}
 	}
 	p.Line("  server up after %s", time.Since(start).Round(100*time.Millisecond))
 	return nil

@@ -411,7 +411,7 @@ func (b *Builder) deploy(ch *modcfg.Channel, set *modcfg.AddonSet, pbo string) (
 // packed one does.
 func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 	includes := b.Mod.IncludesFor(ch.Name)
-	if len(includes) == 0 || len(ch.Deploy) == 0 {
+	if opts.SkipDeploy || len(ch.Deploy) == 0 {
 		return nil
 	}
 
@@ -535,7 +535,7 @@ func (b *Builder) deployIncludes(ch *modcfg.Channel, opts Options) error {
 		}
 	}
 
-	return b.reconcilePlacements(ledger, ch, wanted)
+	return b.reconcilePlacements(ledger, ch, wanted, opts)
 }
 
 // includeFile is the -include allowlist handed to AddonBuilder.
@@ -636,7 +636,7 @@ func (b *Builder) placeLoose(
 // This is what lets a build in one repo clean up after a build in another. The
 // installs are shared, so a loose PBO left behind by a different pack is loaded
 // by the engine just as readily as the current one.
-func (b *Builder) reconcilePlacements(ledger *machine.Placements, ch *modcfg.Channel, wanted map[string][]string) error {
+func (b *Builder) reconcilePlacements(ledger *machine.Placements, ch *modcfg.Channel, wanted map[string][]string, opts Options) error {
 	if b.Runner.DryRun() {
 		return nil
 	}
@@ -663,6 +663,10 @@ func (b *Builder) reconcilePlacements(ledger *machine.Placements, ch *modcfg.Cha
 				ledger.Forget(root, rel)
 			case onDisk != recorded.SHA256:
 				b.Report.Detail("left %s alone: it has changed since the build placed it", rel)
+			case opts.NoPrune:
+				// The same escape hatch pruneDeployed honours: the folder is
+				// deliberately holding something this build would remove.
+				b.Report.Detail("stale %s left in place (--no-prune)", rel)
 			default:
 				if err := os.Remove(dst); err != nil {
 					return fmt.Errorf("include: removing %s: %w", dst, err)

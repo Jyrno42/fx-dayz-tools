@@ -30,6 +30,7 @@ var DefaultErrorPatterns = []string{
 	"is not a member",
 	"Bad type",
 	"Error at line",
+	"Virtual Machine Exception",
 }
 
 // DefaultNoisePatterns are pre-existing complaints from the local test missions

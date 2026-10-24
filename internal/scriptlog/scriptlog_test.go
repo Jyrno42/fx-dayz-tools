@@ -63,6 +63,14 @@ func TestNoiseIsIgnored(t *testing.T) {
 	}
 }
 
+func TestVirtualMachineExceptionIsCaught(t *testing.T) {
+	log := " SCRIPT    (E): Virtual Machine Exception\n"
+	rep := scan(t, log, Options{})
+	if rep.OK() {
+		t.Fatal("a Virtual Machine Exception must fail the check")
+	}
+}
+
 // A noise line that happens to contain an error word is still noise.
 func TestNoiseWinsOverErrors(t *testing.T) {
 	log := "SCRIPT (E): Scripted variables corrupted - Bad type in something\n"
