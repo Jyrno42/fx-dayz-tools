@@ -63,7 +63,7 @@ like a missing addon.
 | Work drive, junctions, PBO prefix derivation | done |
 | `config`, `doctor`, `pdrive`, `hash`, `lint` | done |
 | `build` (pack and deploy) | done |
-| `server`, `client`, `dev`, `wait`, `kill` | done |
+| `server`, `client`, `dev`, `wait`, `kill`, `stop` | done |
 | `launch.mission`: clone a test mission, install `init.c`, reset or replay storage | done |
 | `scriptcheck` (Enforce compile gate) | done |
 | `release` (pack, sign, payload split, zip, manifest) | done, both packers |
@@ -115,7 +115,8 @@ undo one by accident:
   clones a stock mission once (without its `storage_*`), copies the repo's `init.c`
   on top before every launch, and clears or replays the persistence folder. The
   mission name and `storage_<instanceId>` both come from the server config.
-  `--keep-storage` skips the reset for a restart test.
+  `--keep-storage` skips the reset for a restart test, and `stop` closes the game
+  windows instead of terminating, so the server writes its storage on the way out.
 - **Keeping a PBO off clients takes a separate `@mod` folder**, not just
   `side: server`. `side` picks which payload a PBO reaches, but a client loading a
   folder loads everything in it, so the only structural guarantee is a folder of

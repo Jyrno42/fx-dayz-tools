@@ -133,6 +133,7 @@ func newRoot(g *global) *cobra.Command {
 		newClientCmd(g),
 		newDevCmd(g),
 		newWaitCmd(g),
+		newStopCmd(g),
 		newKillCmd(g),
 		newReleaseCmd(g),
 		newScriptCheckCmd(g),

@@ -81,6 +81,9 @@ the schema has.
       before every launch, then keep, clean or replay `storage_<instanceId>`.
       Replaces the per-repo `install_mission.ps1`. `--keep-storage` for restart
       tests, and `doctor` checks the inputs exist
+- [x] `stop`: graceful shutdown by closing the game windows, client first, with a
+      wait and an optional `--force` kill. `kill` can lose the server's last
+      storage write
 - [x] `init` / `init --sync`. Scaffold a new mod repo, or refresh the tool-owned
       files in an existing one
 - [x] `release`: pre-release hooks, clean pack, signing, payload split by side,

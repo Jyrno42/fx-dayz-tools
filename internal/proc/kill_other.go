@@ -14,3 +14,7 @@ func KillByName(name string) (int, error) {
 func IsRunning(name string) (bool, error) {
 	return false, fmt.Errorf("proc: process control is Windows-only")
 }
+
+func CloseByName(name string) (asked, noWindow []int, err error) {
+	return nil, nil, fmt.Errorf("proc: process control is Windows-only")
+}

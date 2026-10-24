@@ -460,7 +460,7 @@ func newKillCmd(g *global) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "kill",
-		Short: "Stop the running client and server",
+		Short: "Terminate the running client and server (use `stop` to let the server save)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Bare `dayzmod kill` stops everything. That is what the old kill-all
@@ -484,10 +484,10 @@ func (g *global) killAll(client, server bool) error {
 
 	targets := map[string][]string{}
 	if client {
-		targets["client"] = []string{"DayZ_x64.exe", "DayZ_BE.exe", "DayZDiag_x64.exe"}
+		targets["client"] = clientExes
 	}
 	if server {
-		targets["server"] = []string{"DayZServer_x64.exe"}
+		targets["server"] = serverExes
 	}
 
 	for _, role := range []string{"client", "server"} {

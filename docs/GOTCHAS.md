@@ -62,6 +62,18 @@ second boot on the same storage spawns a second set.
 folder before every launch, and the folder name is read from the server config
 rather than assumed to be `storage_1`. `--keep-storage` is the opt-out.
 
+### Terminating the server loses its last storage write
+
+`TerminateProcess` on `DayZServer_x64.exe` can leave the persistence folder half
+written. The next boot's log then shows "File ... was not closed", and whatever
+the last save held is gone. Closing the server's console window instead makes it
+run its normal shutdown: the script log ends with `~DayZGame()` and the storage
+folder is rewritten on the way out. Verified 2026-10-24.
+
+*Guarded.* `dayzmod stop` posts `WM_CLOSE` to the game windows, client first so
+the server sees the disconnect, and waits for the processes to exit. `kill`
+remains the blunt instrument, and `stop --force` falls back to it on timeout.
+
 ### Client and server take different mod paths
 
 The server takes bare names (`@CF;@VPPAdminTools`) while the client needs
