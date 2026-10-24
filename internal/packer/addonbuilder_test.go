@@ -275,7 +275,9 @@ func TestAddonBuilderStatesItsTempDir(t *testing.T) {
 	if !found {
 		t.Errorf("argv does not state the temp dir as %q:\n  %q", want, argv)
 	}
-	if ab.SyncDir(j) != `C:\tmp\dayzmod\mymod\core` {
+	// Joined with the host's separator, so the assertion holds on the Linux CI
+	// runner too.
+	if ab.SyncDir(j) != filepath.Join(ab.TempDir, "core") {
 		t.Errorf("SyncDir = %q, want it under the per-repo TempDir", ab.SyncDir(j))
 	}
 }

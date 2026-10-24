@@ -371,7 +371,9 @@ func (c *Config) validateMission(add addFunc) {
 	if m.InitC != "" && !strings.EqualFold(path.Base(filepath.ToSlash(m.InitC)), "init.c") {
 		add("launch.mission.init_c %q must be named init.c, since it is copied over the mission's init.c", m.InitC)
 	}
-	if m.Storage != StorageKeep && m.Storage != StorageClean && filepath.IsAbs(m.Storage) {
+	// Checked by shape rather than filepath.IsAbs, since a Windows drive path in
+	// dayz.yml is absolute whichever platform reads it.
+	if m.StorageSeeded() && (path.IsAbs(paths.ToSlash(m.Storage)) || (len(m.Storage) > 1 && m.Storage[1] == ':')) {
 		add("launch.mission.storage %q must be %q, %q or a repo-relative directory", m.Storage, StorageKeep, StorageClean)
 	}
 }
