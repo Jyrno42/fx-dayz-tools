@@ -373,6 +373,76 @@ func TestBattlEyeRequiresTheBELauncher(t *testing.T) {
 	}
 }
 
+// The mission name comes from the server config's template, or has to be
+// spelled out as <mission>.<world>.
+func TestMissionValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantMsg string
+	}{
+		{
+			name:    "no name and no server config",
+			yaml:    base + "  mission:\n    init_c: tools/mission/init.c\n",
+			wantMsg: "launch.mission.name is required",
+		},
+		{
+			name:    "name without a world suffix",
+			yaml:    base + "  server_config: tools/serverdz_local.cfg\n  mission:\n    name: fxstaff\n",
+			wantMsg: "<mission>.<world>",
+		},
+		{
+			name:    "name that is a path",
+			yaml:    base + "  server_config: tools/serverdz_local.cfg\n  mission:\n    name: mpmissions/fxstaff.deerisle\n",
+			wantMsg: "not a path",
+		},
+		{
+			name:    "init_c that is not an init.c",
+			yaml:    base + "  server_config: tools/serverdz_local.cfg\n  mission:\n    init_c: tools/mission/types.xml\n",
+			wantMsg: "init.c",
+		},
+		{
+			name:    "absolute storage seed",
+			yaml:    base + "  server_config: tools/serverdz_local.cfg\n  mission:\n    storage: 'C:\\saves\\world'\n",
+			wantMsg: "repo-relative",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if err == nil {
+				t.Fatalf("expected an error containing %q", tc.wantMsg)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("error should contain %q, got:\n%v", tc.wantMsg, err)
+			}
+		})
+	}
+}
+
+// Deleting a world is opted into, never the default.
+func TestMissionDefaultsToKeepingStorage(t *testing.T) {
+	cfg, err := Parse([]byte(base + "  server_config: tools/serverdz_local.cfg\n  mission:\n    init_c: tools/mission/init.c\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := cfg.Launch.Mission
+	if m.Storage != StorageKeep {
+		t.Errorf("storage = %q, want %q by default", m.Storage, StorageKeep)
+	}
+	if !m.Configured() || m.StorageSeeded() {
+		t.Errorf("init_c alone should count as configured without seeding storage: %+v", m)
+	}
+
+	plain, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Launch.Mission.Configured() {
+		t.Error("an absent mission block must not count as configured")
+	}
+}
+
 // Turning BattlEye off should make the plain launcher the default instead of
 // leaving a contradiction sitting there.
 func TestBattlEyeOffSelectsThePlainLauncher(t *testing.T) {

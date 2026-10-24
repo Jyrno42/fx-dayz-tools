@@ -181,6 +181,9 @@ func (c *Config) defaultLaunch() {
 			l.ClientExe = ExePlain
 		}
 	}
+	if l.Mission.Storage == "" {
+		l.Mission.Storage = StorageKeep
+	}
 	if l.Diag.ClientExe == "" {
 		l.Diag.ClientExe = ExeDiag
 	}

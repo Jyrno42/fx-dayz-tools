@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/dayz"
 	"github.com/Jyrno42/fx-dayz-tools/internal/machine"
+	"github.com/Jyrno42/fx-dayz-tools/internal/mission"
 	"github.com/Jyrno42/fx-dayz-tools/internal/modcfg"
 	"github.com/Jyrno42/fx-dayz-tools/internal/netwait"
 	"github.com/Jyrno42/fx-dayz-tools/internal/pipeline"
@@ -24,6 +26,8 @@ type launchFlags struct {
 	port     int
 	battlEye bool
 	noBE     bool
+	// keepStorage forces launch.mission.storage to "keep" for one launch.
+	keepStorage bool
 }
 
 func (l *launchFlags) bind(cmd *cobra.Command) {
@@ -33,6 +37,7 @@ func (l *launchFlags) bind(cmd *cobra.Command) {
 	f.IntVar(&l.port, "port", 0, "override the server port")
 	f.BoolVar(&l.battlEye, "battleye", false, "force BattlEye on")
 	f.BoolVar(&l.noBE, "no-battleye", false, "force BattlEye off")
+	f.BoolVar(&l.keepStorage, "keep-storage", false, "leave the mission's persistence folder alone")
 }
 
 // override returns an explicit BattlEye choice, or nil to use the config.
@@ -66,6 +71,8 @@ type launchCtx struct {
 	port     int
 	battlEye bool
 	diag     bool
+	// keepStorage is --keep-storage, see launchFlags.
+	keepStorage bool
 	// serverPID is the process startServer launched, so waits can notice it exit
 	// instead of sitting out their full timeout.
 	serverPID int
@@ -97,6 +104,8 @@ func (g *global) launchCtx(cmd *cobra.Command, l *launchFlags, channel string) (
 		port:     dayz.PortFor(mod, l.preset, l.port),
 		battlEye: dayz.BattlEyeFor(mod, l.preset, be),
 		diag:     l.diag,
+
+		keepStorage: l.keepStorage,
 	}, nil
 }
 
@@ -146,6 +155,10 @@ func (g *global) startServer(lc *launchCtx) error {
 		}
 	}
 
+	if err := g.prepareMission(lc); err != nil {
+		return err
+	}
+
 	var args []string
 	if lc.diag {
 		// The diag executable is a client. -server is what makes it host.
@@ -185,6 +198,62 @@ func (g *global) startServer(lc *launchCtx) error {
 	}
 	if sm := lc.mods.ServerModArg(); sm != "" {
 		p.Detail("server-only: %s", sm)
+	}
+	return nil
+}
+
+// prepareMission runs launch.mission before every server start: clone the
+// mission if missing, copy init.c on top, then clear or seed the storage.
+func (g *global) prepareMission(lc *launchCtx) error {
+	m := lc.mod.Launch.Mission
+	if !m.Configured() {
+		return nil
+	}
+	p := g.printer()
+
+	// Mission name and instanceId come from the server config, so neither is
+	// stated twice.
+	name := m.Name
+	var instanceID int64 = 1
+	if lc.mod.Launch.ServerConfig != "" {
+		src := filepath.Join(lc.mod.Root, filepath.FromSlash(lc.mod.Launch.ServerConfig))
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return coded(ExitPreflight, "reading %s: %v", src, err)
+		}
+		if name == "" {
+			name = serverdz.Template(string(data))
+		}
+		if id, ok := serverdz.InstanceID(string(data)); ok {
+			instanceID = id
+		}
+	}
+	if name == "" {
+		return coded(ExitConfig, "launch.mission needs a mission name: set launch.mission.name, or a Missions template in %s", lc.mod.Launch.ServerConfig)
+	}
+
+	opts := mission.Options{
+		MissionsDir: filepath.Join(lc.host.Paths.DayZServer, "mpmissions"),
+		Name:        name,
+		CloneFrom:   m.CloneFrom,
+		InstanceID:  instanceID,
+		DryRun:      g.dryRun,
+		Log:         func(format string, args ...any) { p.Detail(format, args...) },
+	}
+	if m.InitC != "" {
+		opts.InitC = filepath.Join(lc.mod.Root, filepath.FromSlash(m.InitC))
+	}
+	switch {
+	case lc.keepStorage:
+		p.Detail("keeping %s (--keep-storage)", mission.StorageName(instanceID))
+	case m.Storage == modcfg.StorageClean:
+		opts.Clean = true
+	case m.StorageSeeded():
+		opts.SeedFrom = filepath.Join(lc.mod.Root, filepath.FromSlash(m.Storage))
+	}
+
+	if err := mission.Prepare(opts); err != nil {
+		return coded(ExitPreflight, "%v", err)
 	}
 	return nil
 }

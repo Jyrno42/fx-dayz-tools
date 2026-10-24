@@ -64,6 +64,12 @@ launch:
 {{- end}}
   server_args: ["-dologs", "-adminlog", "-freezecheck"]
   client_args: ["-noSplash", "-noPause"]
+  # A test mission prepared before every server start. Its name is the server
+  # config's Missions template.
+  # mission:
+  #   clone_from: dayzOffline.chernarusplus   # copied once, without storage_*
+  #   init_c: tools/mission/init.c            # copied over init.c every launch
+  #   storage: clean                          # keep | clean | a dir to replay
 
 scriptcheck:
   # How long to let Enforce finish compiling after the port opens.

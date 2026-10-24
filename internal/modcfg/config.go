@@ -373,6 +373,38 @@ type Launch struct {
 
 	Diag    Diag              `yaml:"diag"`
 	Presets map[string]Preset `yaml:"presets"`
+
+	// Mission is the local test mission, prepared before every server start.
+	Mission Mission `yaml:"mission"`
+}
+
+// Mission is the test mission the dev server boots into. Before every server
+// start the tool clones it if missing, copies the repo's init.c on top and
+// resets the persistence folder as asked. It replaces the install_mission.ps1
+// each repo used to carry.
+type Mission struct {
+	// Name is the folder under mpmissions, as <mission>.<world>. Empty means the
+	// template in the server config, so the name is stated once.
+	Name string `yaml:"name"`
+	// CloneFrom is the mission to copy when Name does not exist yet. A bare name
+	// resolves under mpmissions. storage_* folders are not copied.
+	CloneFrom string `yaml:"clone_from"`
+	// InitC is a repo-relative file copied over <mission>\init.c every launch.
+	InitC string `yaml:"init_c"`
+	// Storage is what happens to storage_<instanceId> before launch. "keep"
+	// leaves it, "clean" deletes it, and a repo-relative directory replaces it
+	// with a copy. --keep-storage forces "keep" for one launch.
+	Storage string `yaml:"storage"`
+}
+
+// Configured reports whether any mission preparation is asked for.
+func (m Mission) Configured() bool {
+	return m.Name != "" || m.CloneFrom != "" || m.InitC != "" || (m.Storage != "" && m.Storage != StorageKeep)
+}
+
+// StorageSeeded reports whether Storage is a directory rather than a keyword.
+func (m Mission) StorageSeeded() bool {
+	return m.Storage != "" && m.Storage != StorageKeep && m.Storage != StorageClean
 }
 
 // ModRef is one entry in the launch-time mod load order.

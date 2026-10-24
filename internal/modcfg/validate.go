@@ -3,6 +3,7 @@ package modcfg
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/Jyrno42/fx-dayz-tools/internal/paths"
@@ -346,6 +347,32 @@ func (c *Config) validateLaunch(add addFunc) {
 				add("launch.presets.%s drops %q, which is not in launch.mods", name, drop)
 			}
 		}
+	}
+
+	c.validateMission(add)
+}
+
+func (c *Config) validateMission(add addFunc) {
+	m := c.Launch.Mission
+	if !m.Configured() {
+		return
+	}
+	if m.Name == "" && c.Launch.ServerConfig == "" {
+		add("launch.mission.name is required without launch.server_config, which is where the name is otherwise read from")
+	}
+	if m.Name != "" {
+		if strings.ContainsAny(m.Name, `/\`) {
+			add("launch.mission.name %q must be a folder name under mpmissions, not a path", m.Name)
+		} else if !strings.Contains(m.Name, ".") {
+			// The engine takes the world from the suffix.
+			add("launch.mission.name %q must be <mission>.<world>, e.g. \"dayzOffline.chernarusplus\"", m.Name)
+		}
+	}
+	if m.InitC != "" && !strings.EqualFold(path.Base(filepath.ToSlash(m.InitC)), "init.c") {
+		add("launch.mission.init_c %q must be named init.c, since it is copied over the mission's init.c", m.InitC)
+	}
+	if m.Storage != StorageKeep && m.Storage != StorageClean && filepath.IsAbs(m.Storage) {
+		add("launch.mission.storage %q must be %q, %q or a repo-relative directory", m.Storage, StorageKeep, StorageClean)
 	}
 }
 

@@ -77,6 +77,10 @@ the schema has.
       real compile error.
 - [x] `hooks run <stage>`, which invokes a repo's own generators, linters and tests
 - [x] `-serverMod=` support for server-side-only mods (`launch.mods[].side`)
+- [x] `launch.mission`: clone a stock mission once, copy the repo's `init.c` on top
+      before every launch, then keep, clean or replay `storage_<instanceId>`.
+      Replaces the per-repo `install_mission.ps1`. `--keep-storage` for restart
+      tests, and `doctor` checks the inputs exist
 - [x] `init` / `init --sync`. Scaffold a new mod repo, or refresh the tool-owned
       files in an existing one
 - [x] `release`: pre-release hooks, clean pack, signing, payload split by side,

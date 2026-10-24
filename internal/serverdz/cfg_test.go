@@ -129,3 +129,24 @@ func TestDeployRefusesConfigWithoutInstanceID(t *testing.T) {
 		t.Errorf("the error should name instanceId, got: %v", err)
 	}
 }
+
+func TestInstanceID(t *testing.T) {
+	if id, ok := InstanceID("instanceId = 7;"); !ok || id != 7 {
+		t.Errorf("InstanceID = %d, %v; want 7, true", id, ok)
+	}
+	if _, ok := InstanceID("// instanceId = 7;"); ok {
+		t.Error("a commented-out instanceId must not count")
+	}
+}
+
+// The mission name lives in the server config already, so the manifest should
+// not have to repeat it.
+func TestTemplate(t *testing.T) {
+	cfg := "class Missions\n{\n    class DayZ\n    {\n        // template = \"old.chernarusplus\";\n        template = \"fxstaff.deerisle\";\n    };\n};\n"
+	if got := Template(cfg); got != "fxstaff.deerisle" {
+		t.Errorf("Template = %q, want fxstaff.deerisle", got)
+	}
+	if got := Template("hostname = \"x\";"); got != "" {
+		t.Errorf("Template on a config without one = %q, want empty", got)
+	}
+}

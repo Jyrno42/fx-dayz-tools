@@ -100,6 +100,13 @@ launch:
     - { name: "@Extra Workshop Mod", source: workshop }
   server_args: ["-dologs", "-adminlog", "-freezecheck"]
   client_args: ["-noSplash", "-noPause"]
+  # Headless test mission: cloned once, init.c refreshed every launch, world
+  # wiped every boot.
+  mission:
+    name: pwe.chernarusplus
+    clone_from: dayzOffline.chernarusplus
+    init_c: tools/mission/init.c
+    storage: clean
   diag:
     enabled: true
   presets:

@@ -15,6 +15,30 @@ var instanceIDRe = regexp.MustCompile(`(?im)^\s*instanceId\s*=\s*(-?\d+)\s*;`)
 // battlEyeRe matches `BattlEye = 1;` with any spacing and casing.
 var battlEyeRe = regexp.MustCompile(`(?im)^(\s*BattlEye\s*=\s*)(\d+)(\s*;)`)
 
+// templateRe matches `template = "dayzOffline.chernarusplus";` inside class Missions.
+var templateRe = regexp.MustCompile(`(?im)^\s*template\s*=\s*"([^"]*)"\s*;`)
+
+// InstanceID returns the config's instanceId, if it sets a usable one. The
+// server persists the world into storage_<instanceId>, so the persistence
+// folder's name comes from here.
+func InstanceID(cfg string) (int64, bool) {
+	for _, m := range instanceIDRe.FindAllStringSubmatch(StripComments(cfg), -1) {
+		if v, err := strconv.ParseInt(m[1], 10, 64); err == nil && v >= 0 && v <= 0xFFFFFFFF {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// Template returns the mission the config boots into, or "" when none is set.
+func Template(cfg string) string {
+	m := templateRe.FindStringSubmatch(StripComments(cfg))
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
 // HasInstanceID reports whether the config sets a usable instanceId.
 //
 // Without a valid 32-bit instanceId the server does a graceful
@@ -22,12 +46,8 @@ var battlEyeRe = regexp.MustCompile(`(?im)^(\s*BattlEye\s*=\s*)(\d+)(\s*;)`)
 // Nothing in the logs points at the cause, and the whole thing looks exactly
 // like a mod failing to load.
 func HasInstanceID(cfg string) bool {
-	for _, m := range instanceIDRe.FindAllStringSubmatch(StripComments(cfg), -1) {
-		if v, err := strconv.ParseInt(m[1], 10, 64); err == nil && v >= 0 && v <= 0xFFFFFFFF {
-			return true
-		}
-	}
-	return false
+	_, ok := InstanceID(cfg)
+	return ok
 }
 
 // SetBattlEye rewrites the BattlEye setting, returning the new config and

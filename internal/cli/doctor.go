@@ -325,7 +325,44 @@ func (d *doctor) checkRepo(g *global, host *machine.Config) {
 	d.checkRepoLocation(cfg, host)
 	d.checkAddonSources(cfg)
 	d.checkServerConfig(cfg)
+	d.checkMission(cfg, host)
 	d.checkBuildFiles(cfg)
+}
+
+// checkMission verifies the files launch.mission copies from. A missing one
+// otherwise fails `dev` after the build has already run.
+func (d *doctor) checkMission(cfg *modcfg.Config, host *machine.Config) {
+	m := cfg.Launch.Mission
+	if !m.Configured() {
+		return
+	}
+	if m.InitC != "" {
+		path := filepath.Join(cfg.Root, filepath.FromSlash(m.InitC))
+		if fileExists(path) {
+			d.ok("mission init.c", path)
+		} else {
+			d.fail("mission init.c", "missing: "+path)
+		}
+	}
+	if m.StorageSeeded() {
+		path := filepath.Join(cfg.Root, filepath.FromSlash(m.Storage))
+		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			d.ok("mission storage seed", path)
+		} else {
+			d.fail("mission storage seed", "missing: "+path)
+		}
+	}
+	if m.CloneFrom != "" && host != nil && host.Paths.DayZServer != "" {
+		src := m.CloneFrom
+		if !filepath.IsAbs(src) && !strings.ContainsAny(src, `/\`) {
+			src = filepath.Join(host.Paths.DayZServer, "mpmissions", src)
+		}
+		if fi, err := os.Stat(src); err == nil && fi.IsDir() {
+			d.ok("mission clone source", src)
+		} else {
+			d.fail("mission clone source", "missing: "+src)
+		}
+	}
 }
 
 // checkRepoLocation replaces the hand-written `mklink /J` prerequisite comment

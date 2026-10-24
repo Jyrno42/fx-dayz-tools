@@ -51,6 +51,17 @@ does matter, and that is a plausible mistake for a mod aimed at operators. If yo
 sign, ship the key. Signing without distributing the `.bikey` is the one combination
 that breaks that case rather than helping it.
 
+### The persistence folder travels with a copied mission
+
+The hive writes the world into `mpmissions\<mission>\storage_N`, where N is the
+server config's `instanceId`. Copy a mission folder to make a test mission and
+that world comes along. Everything a test `init.c` spawns is persisted too, so a
+second boot on the same storage spawns a second set.
+
+*Guarded.* `clone_from` skips `storage_*`, `storage: clean` wipes the instance's
+folder before every launch, and the folder name is read from the server config
+rather than assumed to be `storage_1`. `--keep-storage` is the opt-out.
+
 ### Client and server take different mod paths
 
 The server takes bare names (`@CF;@VPPAdminTools`) while the client needs

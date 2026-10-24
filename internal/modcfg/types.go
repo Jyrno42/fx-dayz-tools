@@ -102,6 +102,15 @@ const (
 	PrefixVerify PrefixFilePolicy = "verify"
 )
 
+// Storage keywords for launch.mission.storage. Anything else is a directory.
+const (
+	// StorageKeep leaves the persistence folder alone. The default.
+	StorageKeep = "keep"
+	// StorageClean deletes it before launch. The hive persists everything a test
+	// init.c spawns, so a test mission usually wants this.
+	StorageClean = "clean"
+)
+
 // Duration is a time.Duration that reads from YAML as "40s", "3m", "180s".
 type Duration time.Duration
 

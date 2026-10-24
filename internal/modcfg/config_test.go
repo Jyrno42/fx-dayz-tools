@@ -92,6 +92,11 @@ func TestFullManifestShape(t *testing.T) {
 	}
 
 	// The dev-only mod should drop out of a release load order.
+	m := cfg.Launch.Mission
+	if m.Name != "pwe.chernarusplus" || m.CloneFrom != "dayzOffline.chernarusplus" || m.InitC != "tools/mission/init.c" || m.Storage != StorageClean {
+		t.Errorf("launch.mission parsed as %+v", m)
+	}
+
 	devMods := cfg.Launch.ModsFor("dev")
 	relMods := cfg.Launch.ModsFor("release")
 	if len(devMods) != 5 {

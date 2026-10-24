@@ -64,6 +64,7 @@ like a missing addon.
 | `config`, `doctor`, `pdrive`, `hash`, `lint` | done |
 | `build` (pack and deploy) | done |
 | `server`, `client`, `dev`, `wait`, `kill` | done |
+| `launch.mission`: clone a test mission, install `init.c`, reset or replay storage | done |
 | `scriptcheck` (Enforce compile gate) | done |
 | `release` (pack, sign, payload split, zip, manifest) | done, both packers |
 | pboProject packer, per-PBO obfuscation split | done, verified against 4.31 |
@@ -110,6 +111,11 @@ undo one by accident:
   the asymmetry wrong. A server-side-only mod is `side: server`, which routes it to
   `-serverMod=`. Dropping its PBO into the server's own `Addons` folder merges the
   config but never compiles its scripts, so the mod silently does nothing.
+- **The test mission is declared, not installed by a script.** `launch.mission`
+  clones a stock mission once (without its `storage_*`), copies the repo's `init.c`
+  on top before every launch, and clears or replays the persistence folder. The
+  mission name and `storage_<instanceId>` both come from the server config.
+  `--keep-storage` skips the reset for a restart test.
 - **Keeping a PBO off clients takes a separate `@mod` folder**, not just
   `side: server`. `side` picks which payload a PBO reaches, but a client loading a
   folder loads everything in it, so the only structural guarantee is a folder of
